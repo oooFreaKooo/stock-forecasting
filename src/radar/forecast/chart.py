@@ -8,7 +8,6 @@ import pandas as pd
 
 from radar.config.settings import Settings
 from radar.data.store import ParquetStore
-from radar.forecast.baseline import forecast_baseline
 from radar.forecast.hybrid_predictor import SymbolPrediction
 
 
@@ -25,12 +24,13 @@ def render_prediction_chart(
 
     history_days = settings.forecast.chart_history_days
     history = raw.tail(history_days)
-    close = raw.set_index("date").sort_index()["close"]
-    fc = forecast_baseline(
-        close,
-        horizon_days=settings.forecast.horizon_days,
-        context_days=settings.forecast.context_days,
-    )
+    last_close = float(history["close"].iloc[-1])
+    last_date = pd.Timestamp(history["date"].iloc[-1])
+    ai_ret = prediction.forecast_return_1d or 0.0
+    horizon = settings.forecast.horizon_days
+    forecast_dates = [last_date + pd.offsets.BDay(i + 1) for i in range(horizon)]
+    target_price = last_close * (1.0 + ai_ret)
+    forecast_prices = [target_price] * horizon
 
     fig, ax = plt.subplots(figsize=(12, 6))
 
@@ -43,8 +43,8 @@ def render_prediction_chart(
     )
 
     forecast_df = pd.DataFrame({
-        "date": fc.dates,
-        "close": fc.prices,
+        "date": forecast_dates,
+        "close": forecast_prices,
     })
     bridge = pd.concat([
         history[["date", "close"]].tail(1),
@@ -56,7 +56,7 @@ def render_prediction_chart(
         color="#f97316",
         linewidth=2,
         linestyle="--",
-        label="Forecast (baseline)",
+        label="Forecast (ensemble AI)",
     )
     ax.scatter(
         forecast_df["date"],
@@ -71,7 +71,7 @@ def render_prediction_chart(
     signal_label = "BUY" if prediction.signal else "NO TRADE"
     title = (
         f"{prediction.symbol} — Hybrid AI Radar\n"
-        f"P(up)={prediction.p_up:.1%} | Forecast 1d={prediction.forecast_return_1d:+.2%} | "
+        f"P(up)={prediction.p_up:.1%} | AI return 1d={prediction.forecast_return_1d:+.2%} | "
         f"Signal: {signal_label} ({prediction.confidence})"
     )
     ax.set_title(title, fontsize=13, fontweight="bold")

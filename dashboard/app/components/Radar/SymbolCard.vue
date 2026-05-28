@@ -5,6 +5,8 @@ import {
   signalMeterLabel,
   signalMeterPercent,
   signalMeterValue,
+  noTradeReasons,
+  noTradeReasonsSummary,
   tradeActionHint,
   tradeActionLabel,
 } from '~/utils/signalLabels'
@@ -19,6 +21,7 @@ const emit = defineEmits<{
 }>()
 
 const isBuy = computed(() => props.prediction.signal === 1)
+const blockedReasons = computed(() => noTradeReasons(props.prediction))
 const badgeVariant = computed(() => {
   if (props.prediction.confidence === 'high') return 'default'
   if (props.prediction.confidence === 'medium') return 'secondary'
@@ -39,8 +42,19 @@ const badgeVariant = computed(() => {
           {{ tradeActionLabel(prediction) }}
         </UiBadge>
       </div>
-      <UiCardDescription :title="tradeActionHint(prediction)">
-        {{ isBuy ? 'Actionable buy · 1d ensemble path' : 'No buy today · P(up) is informational' }}
+      <UiCardDescription :title="isBuy ? tradeActionHint(prediction) : noTradeReasonsSummary(prediction)">
+        <template v-if="isBuy">
+          Actionable buy — passes all gates
+        </template>
+        <template v-else>
+          <span class="block">AI return ≠ buy signal (gates use P(up) + filters).</span>
+          <span v-if="blockedReasons.length" class="mt-1 block text-xs">
+            {{ blockedReasons.join(' · ') }}
+          </span>
+          <span v-else class="mt-1 block text-xs text-muted-foreground">
+            Refresh predictions to see gate breakdown (API update).
+          </span>
+        </template>
       </UiCardDescription>
     </UiCardHeader>
     <UiCardContent class="space-y-3">
@@ -57,8 +71,8 @@ const badgeVariant = computed(() => {
           <p class="text-muted-foreground">Confluence</p>
           <p class="font-semibold">{{ ((prediction.confluence_score ?? 0) * 100).toFixed(0) }}%</p>
         </div>
-        <div>
-          <p class="text-muted-foreground">Forecast 1d</p>
+        <div title="Ensemble return model — predicted 1d return">
+          <p class="text-muted-foreground">AI return (1d)</p>
           <p class="font-semibold" :class="(prediction.forecast_return_1d ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'">
             {{ ((prediction.forecast_return_1d ?? 0) * 100).toFixed(2) }}%
           </p>

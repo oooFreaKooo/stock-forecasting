@@ -53,8 +53,8 @@ export interface ChartSeriesResponse {
     validation_bars?: number
     display_timezone?: string
     ai_p_up?: number
-    ai_daily_return_target_1d?: number | null
-    ai_daily_target_price_1d?: number | null
+    ai_return_1d?: number | null
+    ai_target_price_1d?: number | null
   }
 }
 
@@ -91,6 +91,18 @@ export interface NewsSnapshot {
   headlines?: NewsHeadline[]
 }
 
+export interface PredictionGates {
+  probability?: boolean
+  forecast?: boolean
+  memory?: boolean
+  event?: boolean
+  agreement?: boolean
+  horizon?: boolean
+  momentum?: boolean
+  vol?: boolean
+  confluence?: boolean
+}
+
 export interface Prediction {
   symbol: string
   date?: string
@@ -100,6 +112,8 @@ export interface Prediction {
   signal?: number
   confidence?: string
   confluence_score?: number
+  gates?: PredictionGates
+  probability_threshold?: number
   action?: string
   sentiment_mean?: number
   headline_count?: number

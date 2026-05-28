@@ -55,6 +55,10 @@ def _prediction_to_dict(pred) -> dict[str, Any]:
         item["position_size"] = round(float(pred.position_size), 4)
     if getattr(pred, "predicted_return_1d", None) is not None:
         item["predicted_return_1d"] = round(float(pred.predicted_return_1d), 6)
+    if getattr(pred, "gates", None):
+        item["gates"] = {k: bool(v) for k, v in pred.gates.items()}
+    if getattr(pred, "probability_threshold", None) is not None:
+        item["probability_threshold"] = round(float(pred.probability_threshold), 4)
     return item
 
 

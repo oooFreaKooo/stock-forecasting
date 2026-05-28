@@ -13,11 +13,12 @@ from radar.backtest.gated_signals import (
     apply_gated_signals,
     enrich_predictions_with_panel,
     evaluate_signal_tiers,
+    gates_from_row,
 )
 from radar.config.settings import Settings
 from radar.data.store import ParquetStore
 from radar.ensemble.live_scorer import score_live_symbol
-from radar.forecast.baseline import forecast_baseline, forecast_return_1d
+from radar.ensemble.ai_return import get_live_ai_return_1d
 from radar.forecast.intraday_timing import compute_intraday_timing
 from radar.monitoring.paper_tracker import log_paper_signal
 from radar.nlp.live_news import load_live_news_cache
@@ -47,6 +48,8 @@ class SymbolPrediction:
     entry_quality: Optional[float] = None
     position_size: Optional[float] = None
     predicted_return_1d: Optional[float] = None
+    gates: Optional[dict[str, bool]] = None
+    probability_threshold: Optional[float] = None
 
 
 def _load_panel(settings: Settings) -> Optional[pd.DataFrame]:
@@ -131,19 +134,15 @@ def predict_symbol(settings: Settings, symbol: str) -> SymbolPrediction:
     raw = raw.set_index("date").sort_index()
     close = raw["close"]
 
-    fc = forecast_baseline(
-        close,
-        horizon_days=settings.forecast.horizon_days,
-        context_days=settings.forecast.context_days,
-    )
-
     p_up, pred_date, score_row, probability_source = _load_latest_probability(settings, symbol)
     panel_row = _load_latest_panel_row(settings, symbol)
     last_close = float(close.iloc[-1])
-    forecast_ret = forecast_return_1d(fc, last_close)
-    predicted_return = None
-    if score_row is not None and "predicted_return_1d" in score_row.index:
-        predicted_return = float(score_row["predicted_return_1d"])
+
+    ai_return, ai_p_up, live_scores = get_live_ai_return_1d(settings, symbol)
+    if ai_p_up is not None:
+        p_up = ai_p_up
+    forecast_ret = float(ai_return) if ai_return is not None else 0.0
+    predicted_return = forecast_ret if ai_return is not None else None
 
     row_data: dict = {
         "date": pred_date,
@@ -152,10 +151,13 @@ def predict_symbol(settings: Settings, symbol: str) -> SymbolPrediction:
         "p_ensemble": p_up,
         "forecast_return_1d": forecast_ret,
     }
-    if score_row is not None:
+    score_source = live_scores if live_scores is not None else (
+        score_row.to_dict() if score_row is not None else {}
+    )
+    if score_source:
         for col in ("p_lightgbm", "p_xgboost", "p_logistic", "trade_allowed", "p_up_5d", "p_up_20d"):
-            if col in score_row.index and pd.notna(score_row[col]):
-                row_data[col] = score_row[col]
+            if col in score_source and score_source[col] is not None and not pd.isna(score_source[col]):
+                row_data[col] = score_source[col]
     if panel_row is not None:
         for col in (
             "regime_neighbor_win_rate", "is_event_day", "momentum_rank",
@@ -224,6 +226,8 @@ def predict_symbol(settings: Settings, symbol: str) -> SymbolPrediction:
         entry_quality=intraday.entry_quality,
         position_size=position_size,
         predicted_return_1d=predicted_return,
+        gates=gates_from_row(row),
+        probability_threshold=float(threshold),
     )
 
 

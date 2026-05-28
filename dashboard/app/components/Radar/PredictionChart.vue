@@ -66,6 +66,11 @@ const forwardBarCount = computed(() => {
   if (marker == null) return 0
   return modelPoints.value.filter(p => p.x > marker).length
 })
+
+const aiReturn1d = computed(
+  () => props.prediction.forecast_return_1d ?? chartMeta.value?.ai_return_1d ?? null,
+)
+
 const hasData = computed(() => pricePoints.value.length > 0)
 const chartKey = computed(() => `${props.prediction.symbol}-${interval.value}-${props.reloadToken ?? 0}`)
 
@@ -410,13 +415,13 @@ onBeforeUnmount(() => {
           <span class="text-muted-foreground">Last close</span>
           <span class="ml-2 font-semibold tabular-nums">{{ formatPrice(prediction.last_close) }}</span>
         </div>
-        <div>
-          <span class="text-muted-foreground">Signal 1d</span>
+        <div title="Ensemble return model (trained) — same value on symbol cards">
+          <span class="text-muted-foreground">AI return (1d)</span>
           <span
             class="ml-2 font-semibold tabular-nums"
-            :class="(prediction.forecast_return_1d ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'"
+            :class="(aiReturn1d ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'"
           >
-            {{ prediction.forecast_return_1d != null ? `${(prediction.forecast_return_1d * 100).toFixed(2)}%` : '—' }}
+            {{ aiReturn1d != null ? `${(aiReturn1d * 100).toFixed(2)}%` : '—' }}
           </span>
         </div>
         <div v-if="validationSummary" class="text-violet-600 dark:text-violet-400">
@@ -437,11 +442,10 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="text-xs text-muted-foreground">
-      Blue = actual price · Violet dashed = one AI path (walk-forward backtest, then live forward from the last close).
+      Blue = actual · Violet = trained model path (walk-forward backtest, then forward bars scaled to AI return 1d).
       <template v-if="interval !== '1d'">
-        Timestamps are UTC (Europe/Berlin in tooltips).
+        Timestamps UTC (Berlin in tooltips).
       </template>
-      <span v-if="chartMeta?.note"> — {{ chartMeta.note }}</span>
     </p>
 
     <UiCard v-if="loadError" class="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">

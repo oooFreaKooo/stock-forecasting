@@ -196,6 +196,27 @@ def apply_gated_signals(
     return out
 
 
+_GATE_KEYS = (
+    "probability",
+    "forecast",
+    "memory",
+    "event",
+    "agreement",
+    "horizon",
+    "momentum",
+    "vol",
+    "confluence",
+)
+
+
+def gates_from_row(row: pd.Series) -> dict[str, bool]:
+    """Extract per-gate pass/fail for API and UI (True = passed)."""
+    return {
+        key: bool(int(row.get(f"gate_{key}", 0)))
+        for key in _GATE_KEYS
+    }
+
+
 def _hit_rate(trades: pd.DataFrame) -> float:
     if trades.empty:
         return 0.0

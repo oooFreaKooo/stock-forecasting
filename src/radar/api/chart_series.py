@@ -14,8 +14,7 @@ from radar.cache.artifacts import (
 )
 from radar.config.settings import get_settings
 from radar.data.store import ParquetStore
-from radar.ensemble.live_scorer import score_live_symbol
-from radar.forecast.baseline import forecast_baseline, forecast_return_1d
+from radar.ensemble.ai_return import get_live_ai_return_1d
 from radar.forecast.chart_paths import (
     build_unified_model_path,
     resample_chart_points_to_1h,
@@ -32,7 +31,7 @@ INTERVAL_META: dict[str, dict[str, Any]] = {
         "source": "yfinance",
         "period": "5d",
         "default_limit": 390,
-        "note": "5-minute close incl. pre/post-market + short-term forecast.",
+        "note": "5m close + trained intraday model, anchored to ensemble 1d return.",
     },
     "1h": {
         "source": "yfinance",
@@ -43,7 +42,7 @@ INTERVAL_META: dict[str, dict[str, Any]] = {
     "1d": {
         "source": "parquet",
         "forward_horizon_days": 5,
-        "note": "Daily close with full-window walk-forward backtest and forward forecast.",
+        "note": "Daily close + ensemble return model forward path.",
     },
 }
 
@@ -93,28 +92,23 @@ def _row_to_point(row: pd.Series) -> dict[str, Any]:
     }
 
 
-def _daily_return_target(
-    settings,
-    store: ParquetStore,
-    symbol: str,
+def _forward_points_from_ai_return(
     last_close: float,
-) -> Optional[float]:
-    try:
-        if not store.exists(symbol):
-            return None
-        raw = store.read(symbol)
-        raw["date"] = pd.to_datetime(raw["date"])
-        daily_close = raw.set_index("date").sort_index()["close"].astype(float)
-        if len(daily_close) < 20:
-            return None
-        fc = forecast_baseline(
-            daily_close,
-            horizon_days=settings.forecast.horizon_days,
-            context_days=settings.forecast.context_days,
-        )
-        return forecast_return_1d(fc, last_close)
-    except Exception:
-        return None
+    last_ts: pd.Timestamp,
+    horizon_days: int,
+    return_1d: float,
+) -> list[dict[str, Any]]:
+    """Build daily forward closes from ensemble predicted_return_1d (day 1), flat thereafter."""
+    forward: list[dict[str, Any]] = []
+    price = float(last_close)
+    for i in range(horizon_days):
+        if i == 0:
+            price = float(last_close) * (1.0 + float(return_1d))
+        forward.append({
+            "date": to_utc_iso(last_ts + pd.offsets.BDay(i + 1)),
+            "close": round(price, 4),
+        })
+    return forward
 
 
 def _get_daily_chart_series(
@@ -151,37 +145,15 @@ def _get_daily_chart_series(
     )
 
     forward_points: list[dict[str, Any]] = []
-    engine = str(val_metrics.get("engine", "baseline"))
+    engine = "ensemble_return"
     horizon = int(meta.get("forward_horizon_days", 5))
-    live_scores = score_live_symbol(settings, symbol)
-    daily_return_target = _daily_return_target(settings, store, symbol, float(close.iloc[-1]))
-    if live_scores is not None:
-        ret = live_scores.get("predicted_return_1d")
-        if ret is not None and not pd.isna(ret):
-            daily_return_target = float(ret)
-    p_up = float(live_scores.get("p_up", 0.5)) if live_scores else 0.5
+    ai_return, p_up_live, _live = get_live_ai_return_1d(settings, symbol)
+    p_up = float(p_up_live) if p_up_live is not None else 0.5
 
-    if len(close) >= 20:
-        fc = forecast_baseline(
-            close,
-            horizon_days=horizon,
-            context_days=settings.forecast.context_days,
-        )
-        engine = fc.engine
+    if ai_return is not None and len(close) >= 1:
         last_p = float(close.iloc[-1])
-        if daily_return_target is not None and live_scores is not None:
-            blend = settings.forecast.daily_validation_blend
-            baseline_ret = float(fc.prices[0] / last_p - 1.0)
-            blended_ret = (1.0 - blend) * baseline_ret + blend * daily_return_target
-            fc.prices[0] = last_p * (1.0 + blended_ret)
-            engine = "hybrid_daily"
         last_ts = pd.Timestamp(close.index[-1])
-        for i, price in enumerate(fc.prices):
-            ts = last_ts + pd.offsets.BDay(i + 1)
-            forward_points.append({
-                "date": to_utc_iso(ts),
-                "close": round(float(price), 4),
-            })
+        forward_points = _forward_points_from_ai_return(last_p, last_ts, horizon, float(ai_return))
 
     model_points = build_unified_model_path(points, val_points, forward_points)
 
@@ -215,9 +187,9 @@ def _get_daily_chart_series(
             "display_timezone": "Europe/Berlin",
             "note": meta["note"],
             "ai_p_up": round(float(p_up), 6),
-            "ai_daily_return_target_1d": round(float(daily_return_target), 6) if daily_return_target is not None else None,
-            "ai_daily_target_price_1d": round(float(close.iloc[-1]) * (1.0 + float(daily_return_target)), 4)
-            if daily_return_target is not None
+            "ai_return_1d": round(float(ai_return), 6) if ai_return is not None else None,
+            "ai_target_price_1d": round(float(close.iloc[-1]) * (1.0 + float(ai_return)), 4)
+            if ai_return is not None
             else None,
         },
     }
@@ -273,18 +245,17 @@ def _build_intraday_5m_chart(
 
     points = [_row_to_point(row) for _, row in normalized.iterrows() if pd.notna(row["close"])]
 
-    store = ParquetStore(settings.paths.raw_dir)
     last_close = float(normalized["close"].dropna().iloc[-1]) if len(normalized) else 0.0
-    live_scores = score_live_symbol(settings, symbol)
-    daily_return_target = _daily_return_target(settings, store, symbol, last_close)
-    if live_scores is not None:
-        ret = live_scores.get("predicted_return_1d")
-        if ret is not None and not pd.isna(ret):
-            daily_return_target = float(ret)
+    ai_return, p_up_live, _live = get_live_ai_return_1d(settings, symbol)
+    p_up = float(p_up_live) if p_up_live is not None else 0.5
 
-    p_up = float(live_scores.get("p_up", 0.5)) if live_scores else 0.5
-
-    forecast = forecast_intraday_series(normalized, "5m", config_dir=config_dir)
+    forecast = forecast_intraday_series(
+        normalized,
+        "5m",
+        config_dir=config_dir,
+        daily_return_target=ai_return,
+        p_up=p_up,
+    )
     forecast_points = [
         p for p in forecast.points
         if is_valid_trading_time(pd.Timestamp(str(p["date"]).replace("Z", "")))
@@ -333,9 +304,9 @@ def _build_intraday_5m_chart(
             "display_timezone": "Europe/Berlin",
             "note": meta["note"],
             "ai_p_up": round(float(p_up), 6),
-            "ai_daily_return_target_1d": round(float(daily_return_target), 6) if daily_return_target is not None else None,
-            "ai_daily_target_price_1d": round(float(last_close) * (1.0 + float(daily_return_target)), 4)
-            if daily_return_target is not None
+            "ai_return_1d": round(float(ai_return), 6) if ai_return is not None else None,
+            "ai_target_price_1d": round(float(last_close) * (1.0 + float(ai_return)), 4)
+            if ai_return is not None
             else None,
         },
     }

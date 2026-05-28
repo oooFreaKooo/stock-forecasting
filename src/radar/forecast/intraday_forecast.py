@@ -482,6 +482,9 @@ def forecast_intraday_series(
     config_dir: str = "config",
     horizon_bars_override: Optional[int] = None,
     future_dates_override: Optional[pd.DatetimeIndex] = None,
+    *,
+    daily_return_target: Optional[float] = None,
+    p_up: Optional[float] = None,
 ) -> IntradayForecastResult:
     """Next-bar intraday path from the trained 5m LGBM model (fallback: session-aware baseline)."""
     interval = interval.lower()
@@ -547,6 +550,8 @@ def forecast_intraday_series(
                     open_stats,
                     at_session_open=_is_entering_cash_open(i, future_dates),
                     model_step=model_step,
+                    daily_return_target=daily_return_target,
+                    p_up=p_up if p_up is not None else 0.5,
                 )
             else:
                 step = model_step
@@ -568,11 +573,23 @@ def forecast_intraday_series(
             horizon_bars,
             future_times=future_dates,
             historical_frame=work,
-            daily_return_target=None,
+            daily_return_target=daily_return_target,
+            p_up=p_up if p_up is not None else 0.5,
             interval=interval,
         )
 
     forecast_values = baseline_values
+
+    if daily_return_target is not None and len(forecast_values) > 0:
+        bars_per_session = _RTH_5M_BARS_PER_SESSION if interval == "5m" else max(1, _RTH_5M_BARS_PER_SESSION // 12)
+        session_frac = min(1.0, len(forecast_values) / bars_per_session)
+        target_total = float(daily_return_target) * session_frac
+        forecast_values = _scale_path_to_total_return(
+            forecast_values,
+            last_close,
+            target_total,
+            future_dates,
+        )
 
     # Baseline-only paths: apply open overlay once. LGBM already adjusts each bar in-loop.
     if interval == "5m" and len(forecast_values) > 0 and "lgbm" not in engine:

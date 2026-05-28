@@ -34,7 +34,7 @@ def main() -> None:
         for iv, s in (("5m", s5), ("1h", s1h), ("1d", s1d)):
             meta = s.get("meta", {})
             out[f"{iv}_p_up"] = meta.get("ai_p_up")
-            out[f"{iv}_daily_ret"] = meta.get("ai_daily_return_target_1d")
+            out[f"{iv}_daily_ret"] = meta.get("ai_return_1d")
             out[f"{iv}_fc_first_ret"] = _first_forecast_return(s)
         rows.append(out)
 
@@ -56,7 +56,7 @@ def main() -> None:
         print(bad[["symbol", "5m_daily_ret", "1h_daily_ret", "1d_daily_ret", "daily_ret_span"]].to_string(index=False))
         raise SystemExit(2)
 
-    print("\nOK: daily_return_target matches across 5m/1h/1d for all symbols.")
+    print("\nOK: ai_return_1d matches across 5m/1h/1d for all symbols.")
 
 
 if __name__ == "__main__":
