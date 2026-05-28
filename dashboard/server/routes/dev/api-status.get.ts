@@ -10,6 +10,7 @@ export default defineEventHandler(async () => {
       routes?: string[]
       predictions_cached?: boolean
       predictions_cached_at?: string | null
+      alphavantage_configured?: boolean
     }>(`${base}/api/meta`, { timeout: 4_000 })
 
     return {
@@ -17,6 +18,7 @@ export default defineEventHandler(async () => {
       version: meta.version ?? 'unknown',
       started_at: meta.started_at ?? null,
       news_enabled: meta.news_enabled ?? meta.routes?.includes('/api/news') ?? false,
+      alphavantage_configured: meta.alphavantage_configured ?? false,
       features: meta.features ?? [],
       routes: meta.routes ?? [],
       predictions_cached: meta.predictions_cached ?? false,

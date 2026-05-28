@@ -43,6 +43,26 @@ def build_unified_model_path(
     return backtest + [last_point] + future
 
 
+def build_forward_display_path(
+    history: list[dict[str, Any]],
+    forward: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """
+    Chart overlay: last actual close + forward forecast only.
+
+    Walk-forward backtest stays in ``validation.points`` — plotting it on the
+    main line looked like a broken straight ramp.
+    """
+    if not forward:
+        return []
+    if not history:
+        return list(forward)
+    last_point = history[-1]
+    last_ts = parse_chart_ts(last_point["date"])
+    future = [p for p in forward if parse_chart_ts(p["date"]) > last_ts]
+    return [last_point] + future
+
+
 def _close_series_from_points(points: list[dict[str, Any]]) -> pd.Series:
     if not points:
         return pd.Series(dtype=float)
@@ -92,6 +112,16 @@ def resample_intraday_chart_to_1h(
         model_points = resample_chart_points_to_1h(model_5m)
     else:
         model_points = build_unified_model_path(points, val_points, fwd_points)
+    comparison_out = None
+    comp = chart_5m.get("comparison")
+    if comp and comp.get("points"):
+        if comp.get("display") == "markers":
+            comparison_out = comp
+        else:
+            comparison_out = {
+                **comp,
+                "points": resample_chart_points_to_1h(comp["points"]),
+            }
     meta = dict(chart_5m.get("meta") or {})
     meta["rows"] = len(points)
     meta["validation_bars"] = len(val_points)
@@ -123,4 +153,5 @@ def resample_intraday_chart_to_1h(
             "metrics": validation.get("metrics", {}),
         },
         "meta": meta,
+        **({"comparison": comparison_out} if comparison_out else {}),
     }

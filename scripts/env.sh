@@ -21,3 +21,10 @@ if [[ -d "${RADAR_ROOT}/.venv" ]]; then
   # shellcheck source=/dev/null
   source "${RADAR_ROOT}/.venv/bin/activate"
 fi
+
+if [[ -f "${RADAR_ROOT}/.env" ]]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "${RADAR_ROOT}/.env"
+  set +a
+fi

@@ -15,11 +15,13 @@ from radar.cache.artifacts import (
 from radar.config.settings import get_settings
 from radar.data.store import ParquetStore
 from radar.ensemble.ai_return import get_live_ai_return_1d
+from radar.data.adapters.alphavantage import fetch_daily_closes, is_configured as av_configured
 from radar.forecast.chart_paths import (
     build_unified_model_path,
     resample_chart_points_to_1h,
     resample_intraday_chart_to_1h,
 )
+from radar.forecast.alphavantage_forecast import build_alphavantage_comparison
 from radar.forecast.intraday_forecast import forecast_intraday_series
 from radar.forecast.intraday_sanitize import sanitize_intraday_closes
 from radar.forecast.market_hours import filter_trading_frame, is_valid_trading_time, to_utc_iso
@@ -115,6 +117,8 @@ def _get_daily_chart_series(
     symbol: str,
     limit: Optional[int],
     config_dir: str,
+    *,
+    av_daily: Optional["pd.Series"] = None,
 ) -> dict[str, Any]:
     meta = INTERVAL_META["1d"]
     settings = get_settings(config_dir)
@@ -157,6 +161,22 @@ def _get_daily_chart_series(
 
     model_points = build_unified_model_path(points, val_points, forward_points)
 
+    comparison = None
+    if forward_points:
+        last_ts = pd.Timestamp(close.index[-1])
+        future_idx = pd.DatetimeIndex(
+            [pd.Timestamp(str(p["date"]).replace("Z", "")) for p in forward_points]
+        )
+        comparison = build_alphavantage_comparison(
+            symbol,
+            interval="1d",
+            anchor_price=float(close.iloc[-1]),
+            anchor_ts=last_ts,
+            future_dates=future_idx,
+            daily_closes=av_daily,
+            history_points=points,
+        )
+
     return {
         "symbol": symbol,
         "interval": "1d",
@@ -191,7 +211,13 @@ def _get_daily_chart_series(
             "ai_target_price_1d": round(float(close.iloc[-1]) * (1.0 + float(ai_return)), 4)
             if ai_return is not None
             else None,
+            "alphavantage_enabled": comparison is not None,
+            "alphavantage_return_1d": comparison.get("return_1d") if comparison else None,
+            "alphavantage_error": None if comparison else (
+                "rate_limited_or_missing_key" if av_configured() else "missing_api_key"
+            ),
         },
+        **({"comparison": comparison} if comparison else {}),
     }
 
 def _load_intraday_5m_bars(
@@ -232,6 +258,8 @@ def _build_intraday_5m_chart(
     symbol: str,
     limit: Optional[int] = None,
     config_dir: str = "config",
+    *,
+    av_daily: Optional["pd.Series"] = None,
 ) -> dict[str, Any]:
     """Canonical intraday chart: one 5M fetch, one AI forecast, one walk-forward backtest."""
     meta = INTERVAL_META["5m"]
@@ -255,7 +283,7 @@ def _build_intraday_5m_chart(
         config_dir=config_dir,
         daily_return_target=ai_return,
         p_up=p_up,
-    )
+    )  # daily target: open-window hint only; LGBM path is not rescaled
     forecast_points = [
         p for p in forecast.points
         if is_valid_trading_time(pd.Timestamp(str(p["date"]).replace("Z", "")))
@@ -272,6 +300,23 @@ def _build_intraday_5m_chart(
     )
 
     model_points = build_unified_model_path(points, val_points, forecast_points)
+
+    comparison = None
+    if forecast_points and len(normalized):
+        last_row = normalized.iloc[-1]
+        last_ts = pd.Timestamp(last_row["date"])
+        future_idx = pd.DatetimeIndex(
+            [pd.Timestamp(str(p["date"]).replace("Z", "")) for p in forecast_points]
+        )
+        comparison = build_alphavantage_comparison(
+            symbol,
+            interval="5m",
+            anchor_price=last_close,
+            anchor_ts=last_ts,
+            future_dates=future_idx,
+            daily_closes=av_daily,
+            history_points=points,
+        )
 
     return {
         "symbol": symbol,
@@ -308,7 +353,13 @@ def _build_intraday_5m_chart(
             "ai_target_price_1d": round(float(last_close) * (1.0 + float(ai_return)), 4)
             if ai_return is not None
             else None,
+            "alphavantage_enabled": comparison is not None,
+            "alphavantage_return_1d": comparison.get("return_1d") if comparison else None,
+            "alphavantage_error": None if comparison else (
+                "rate_limited_or_missing_key" if av_configured() else "missing_api_key"
+            ),
         },
+        **({"comparison": comparison} if comparison else {}),
     }
 
 
@@ -361,12 +412,13 @@ def get_chart_bundle(
         if cached and not is_stale(cached.get("cached_at"), CHART_CACHE_TTL_SECONDS):
             return {k: v for k, v in cached.items() if k != "cached_at"}
 
-    chart_5m = _build_intraday_5m_chart(symbol, limit, config_dir)
+    av_daily = fetch_daily_closes(symbol) if av_configured() else None
+    chart_5m = _build_intraday_5m_chart(symbol, limit, config_dir, av_daily=av_daily)
     bundle = {
         "symbol": symbol,
         "intraday": chart_5m,
         "intraday_1h": _build_intraday_1h_view(chart_5m, symbol, limit=limit),
-        "daily": _get_daily_chart_series(symbol, limit, config_dir),
+        "daily": _get_daily_chart_series(symbol, limit, config_dir, av_daily=av_daily),
     }
     save_chart_bundle_cache(settings, symbol, bundle)
     return bundle

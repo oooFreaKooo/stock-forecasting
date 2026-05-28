@@ -350,6 +350,49 @@ def _boost_path_volatility(
     return np.array(out, dtype=float)
 
 
+def _blend_lgbm_with_session_shape(
+    lgbm_prices: np.ndarray,
+    anchor_price: float,
+    context: np.ndarray,
+    work: pd.DataFrame,
+    future_dates: pd.DatetimeIndex,
+    interval: str,
+    *,
+    shape_weight: float = 0.55,
+    daily_return_target: Optional[float] = None,
+) -> np.ndarray:
+    """
+    LGBM next-bar returns are often near-flat; blend in session-shaped baseline
+    moves so the forward segment looks like a market path, keeping LGBM terminal.
+    """
+    horizon = len(lgbm_prices)
+    if horizon < 2:
+        return lgbm_prices
+
+    shaped = _forecast_baseline_bars(
+        context,
+        horizon,
+        future_times=future_dates,
+        historical_frame=work,
+        daily_return_target=daily_return_target,
+        interval=interval,
+    )
+    if len(shaped) != horizon:
+        return lgbm_prices
+
+    anchor = float(anchor_price)
+    lgbm_path = np.r_[anchor, lgbm_prices]
+    shape_path = np.r_[anchor, shaped]
+    lgbm_steps = np.diff(lgbm_path) / np.maximum(lgbm_path[:-1], 1e-6)
+    shape_steps = np.diff(shape_path) / np.maximum(shape_path[:-1], 1e-6)
+    blended_steps = (1.0 - shape_weight) * lgbm_steps + shape_weight * shape_steps
+    out = _rebuild_path_from_steps(anchor, blended_steps.tolist())
+    terminal = float(lgbm_prices[-1])
+    if out[-1] > 0 and terminal > 0:
+        out = out * (terminal / float(out[-1]))
+    return out
+
+
 def _recent_shock_momentum(returns: np.ndarray) -> float:
     """Propagate large last-bar moves (e.g. afternoon selloff) into the next few bars."""
     if len(returns) < 4:
@@ -580,7 +623,21 @@ def forecast_intraday_series(
 
     forecast_values = baseline_values
 
-    if daily_return_target is not None and len(forecast_values) > 0:
+    if "lgbm" in engine and len(forecast_values) > 2:
+        terminal = float(baseline_values[-1])
+        forecast_values = _blend_lgbm_with_session_shape(
+            forecast_values,
+            last_close,
+            context,
+            work,
+            future_dates,
+            interval,
+            daily_return_target=daily_return_target,
+        )
+
+    # Do not rescale the trained LGBM path to the daily return — that flattens steps into
+    # a near-linear ramp. Baseline fallback still nudges toward the daily target in-loop.
+    if daily_return_target is not None and len(forecast_values) > 0 and "lgbm" not in engine:
         bars_per_session = _RTH_5M_BARS_PER_SESSION if interval == "5m" else max(1, _RTH_5M_BARS_PER_SESSION // 12)
         session_frac = min(1.0, len(forecast_values) / bars_per_session)
         target_total = float(daily_return_target) * session_frac

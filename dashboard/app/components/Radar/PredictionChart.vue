@@ -33,6 +33,10 @@ const loadError = ref<string | null>(null)
 
 const pricePoints = shallowRef<LinePoint[]>([])
 const modelPoints = shallowRef<LinePoint[]>([])
+const comparisonPoints = shallowRef<LinePoint[]>([])
+const comparisonDisplay = ref<'markers' | 'daily_line'>('daily_line')
+const comparisonNote = ref<string | null>(null)
+const comparisonEngine = ref<string | null>(null)
 const validationMetrics = ref<ChartValidationMetrics | null>(null)
 const tooltipDates = shallowRef<string[]>([])
 const useCalendarAxis = ref(false)
@@ -63,7 +67,7 @@ const DEFAULT_BARS = Object.fromEntries(INTERVALS.map(i => [i.value, i.defaultBa
 const barCount = computed(() => pricePoints.value.length)
 const forwardBarCount = computed(() => {
   const marker = forecastMarkerX.value
-  if (marker == null) return 0
+  if (marker == null) return chartMeta.value?.forecast_bars ?? 0
   return modelPoints.value.filter(p => p.x > marker).length
 })
 
@@ -100,6 +104,7 @@ function boundsForXRange(minX: number, maxX: number): { min: number; max: number
   return computeBounds([
     ...inRange(pricePoints.value),
     ...inRange(modelPoints.value),
+    ...inRange(comparisonPoints.value),
   ])
 }
 
@@ -136,6 +141,7 @@ function fitDefaultView(chart: ChartRef) {
 function buildChartData(
   history: ChartPoint[],
   model: ChartPoint[],
+  comparison: ChartPoint[],
   iv: ChartInterval,
 ) {
   const stepMs = STEP_BY_INTERVAL[iv]
@@ -156,6 +162,13 @@ function buildChartData(
     modelLine.push({ x: parseUtcMs(pt.date), y: close })
   }
 
+  const comparisonLine: LinePoint[] = []
+  for (const pt of comparison) {
+    const close = roundPrice(pt.close)
+    if (close == null) continue
+    comparisonLine.push({ x: parseUtcMs(pt.date), y: close })
+  }
+
   const lastHist = prices.at(-1)
   let markerX: number | null = null
   if (lastHist && modelLine.some(p => p.x > lastHist.x)) {
@@ -165,6 +178,7 @@ function buildChartData(
   tooltipDates.value = []
   pricePoints.value = prices
   modelPoints.value = modelLine
+  comparisonPoints.value = comparisonLine
   forecastMarkerX.value = markerX
 }
 
@@ -182,18 +196,54 @@ const chartSeries = computed<ApexOptions['series']>(() => {
   ]
   if (modelPoints.value.length) {
     series.push({
-      name: `AI forecast (${forecastEngine.value ?? 'baseline'})`,
+      name: `Radar AI (${forecastEngine.value ?? 'model'})`,
       type: 'line',
       data: modelPoints.value,
     })
+  }
+  if (comparisonPoints.value.length) {
+    if (comparisonDisplay.value === 'markers') {
+      series.push({
+        name: 'Alpha Vantage (daily EOD)',
+        type: 'scatter',
+        data: comparisonPoints.value,
+      })
+    } else {
+      series.push({
+        name: `Alpha Vantage (${comparisonEngine.value ?? 'daily'})`,
+        type: 'line',
+        data: comparisonPoints.value,
+      })
+    }
   }
   return series
 })
 
 const seriesStroke = computed(() => {
-  const n = chartSeries.value?.length ?? 1
-  if (n === 2) return { width: [2, 2.5] as number[], dash: [0, 6] as number[] }
-  return { width: [2] as number[], dash: [0] as number[] }
+  const dash: number[] = [0]
+  const width: number[] = [2]
+  const curve: ('straight' | 'stepline')[] = ['straight']
+  if (modelPoints.value.length) {
+    dash.push(0)
+    width.push(2.5)
+    curve.push('straight')
+  }
+  if (comparisonPoints.value.length && comparisonDisplay.value === 'daily_line') {
+    dash.push(8)
+    width.push(3)
+    curve.push('straight')
+  }
+  return { width, dash, curve }
+})
+
+const markerSizes = computed((): number | number[] => {
+  if (comparisonDisplay.value !== 'markers' || !comparisonPoints.value.length) {
+    return 0
+  }
+  const sizes = [0]
+  if (modelPoints.value.length) sizes.push(0)
+  sizes.push(7)
+  return sizes
 })
 
 const chartOptions = computed<ApexOptions>(() => ({
@@ -244,10 +294,10 @@ const chartOptions = computed<ApexOptions>(() => ({
   },
   stroke: {
     width: seriesStroke.value.width,
-    curve: 'straight',
+    curve: seriesStroke.value.curve,
     dashArray: seriesStroke.value.dash,
   },
-  colors: ['#2563eb', '#8b5cf6'],
+  colors: ['#2563eb', '#8b5cf6', '#ea580c'],
   grid: {
     borderColor: 'var(--color-border)',
     strokeDashArray: 4,
@@ -284,13 +334,14 @@ const chartOptions = computed<ApexOptions>(() => ({
     tooltip: { enabled: false },
   },
   legend: {
-    show: modelPoints.value.length > 0,
+    show: modelPoints.value.length > 0 || comparisonPoints.value.length > 0,
     position: 'top',
     horizontalAlign: 'left',
   },
   markers: {
-    size: 0,
-    hover: { size: 4 },
+    size: markerSizes.value,
+    strokeWidth: markerSizes.value === 0 ? 0 : undefined,
+    hover: { size: comparisonDisplay.value === 'markers' ? 9 : 4 },
   },
   tooltip: {
     enabled: true,
@@ -325,9 +376,12 @@ function chartForInterval(cache: ChartBundleCache, iv: ChartInterval): ChartSeri
 }
 
 function applyChartResponse(res: ChartSeriesResponse, iv: ChartInterval) {
-  buildChartData(res.points, res.model?.points ?? [], iv)
+  buildChartData(res.points, res.model?.points ?? [], res.comparison?.points ?? [], iv)
   chartMeta.value = res.meta
   forecastEngine.value = res.model?.engine ?? res.forecast?.engine ?? res.meta.forecast_engine ?? null
+  comparisonDisplay.value = res.comparison?.display ?? 'daily_line'
+  comparisonNote.value = res.comparison?.note ?? null
+  comparisonEngine.value = res.comparison?.engine ?? null
   validationMetrics.value = res.validation?.metrics ?? null
 }
 
@@ -365,6 +419,10 @@ async function loadChart() {
     chartBundleCache.value = null
     pricePoints.value = []
     modelPoints.value = []
+    comparisonPoints.value = []
+    comparisonDisplay.value = 'daily_line'
+    comparisonNote.value = null
+    comparisonEngine.value = null
     validationMetrics.value = null
     tooltipDates.value = []
     chartMeta.value = null
@@ -416,7 +474,7 @@ onBeforeUnmount(() => {
           <span class="ml-2 font-semibold tabular-nums">{{ formatPrice(prediction.last_close) }}</span>
         </div>
         <div title="Ensemble return model (trained) — same value on symbol cards">
-          <span class="text-muted-foreground">AI return (1d)</span>
+          <span class="text-muted-foreground">Radar AI (1d)</span>
           <span
             class="ml-2 font-semibold tabular-nums"
             :class="(aiReturn1d ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-500'"
@@ -424,11 +482,26 @@ onBeforeUnmount(() => {
             {{ aiReturn1d != null ? `${(aiReturn1d * 100).toFixed(2)}%` : '—' }}
           </span>
         </div>
+        <div
+          v-if="chartMeta?.alphavantage_enabled && chartMeta.alphavantage_return_1d != null"
+          title="Alpha Vantage daily close change (vendor series)"
+        >
+          <span class="text-muted-foreground">AV trend (1d)</span>
+          <span
+            class="ml-2 font-semibold tabular-nums"
+            :class="(chartMeta.alphavantage_return_1d ?? 0) >= 0 ? 'text-amber-600' : 'text-red-500'"
+          >
+            {{ (chartMeta.alphavantage_return_1d * 100).toFixed(2) }}%
+          </span>
+        </div>
         <div v-if="validationSummary" class="text-violet-600 dark:text-violet-400">
           Backtest: {{ validationSummary }}
         </div>
         <div v-if="chartMeta" class="text-muted-foreground">
           {{ chartMeta.rows }} bars · {{ chartMeta.validation_bars ?? 0 }} backtest · {{ chartMeta.forecast_bars ?? 0 }} forward
+          <span v-if="comparisonDisplay === 'markers' && comparisonPoints.length">
+            · AV {{ comparisonPoints.length }} EOD markers
+          </span>
         </div>
       </div>
 
@@ -442,10 +515,27 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="text-xs text-muted-foreground">
-      Blue = actual · Violet = trained model path (walk-forward backtest, then forward bars scaled to AI return 1d).
+      Blue = actual (yfinance) · Violet = Radar AI.
+      <template v-if="interval !== '1d'">
+        Amber dots = Alpha Vantage daily close only (free API; not intraday).
+      </template>
+      <template v-else>
+        Amber = Alpha Vantage daily series (vendor data).
+      </template>
       <template v-if="interval !== '1d'">
         Timestamps UTC (Berlin in tooltips).
       </template>
+      <span v-if="comparisonNote" class="block mt-1 text-amber-700 dark:text-amber-400">
+        {{ comparisonNote }}
+      </span>
+      <span v-if="!chartMeta?.alphavantage_enabled" class="block mt-1">
+        <template v-if="chartMeta?.alphavantage_error === 'rate_limited_or_missing_key'">
+          Alpha Vantage line unavailable (free-tier rate limit or wait 1s between symbols). Daily series is used when the API responds.
+        </template>
+        <template v-else>
+          Set <code class="rounded bg-muted px-1">ALPHAVANTAGE_API_KEY</code> in <code class="rounded bg-muted px-1">.env</code> for the amber comparison line.
+        </template>
+      </span>
     </p>
 
     <UiCard v-if="loadError" class="border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950/30">

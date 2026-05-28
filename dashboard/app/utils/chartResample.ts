@@ -37,6 +37,12 @@ export function resampleIntradayChartTo1h(chart5m: ChartSeriesResponse): ChartSe
   const valPoints = resamplePointsTo1h(chart5m.validation?.points ?? [])
   const fwdPoints = resamplePointsTo1h(forecast.points)
   const modelPoints = resamplePointsTo1h(chart5m.model?.points ?? [])
+  const comparisonPoints =
+    chart5m.comparison?.display === 'markers'
+      ? chart5m.comparison.points
+      : chart5m.comparison?.points?.length
+        ? resamplePointsTo1h(chart5m.comparison.points)
+        : undefined
 
   return {
     ...chart5m,
@@ -55,6 +61,9 @@ export function resampleIntradayChartTo1h(chart5m: ChartSeriesResponse): ChartSe
     },
     validation: chart5m.validation
       ? { ...chart5m.validation, points: valPoints }
+      : undefined,
+    comparison: comparisonPoints && chart5m.comparison
+      ? { ...chart5m.comparison, points: comparisonPoints }
       : undefined,
     meta: {
       ...chart5m.meta,

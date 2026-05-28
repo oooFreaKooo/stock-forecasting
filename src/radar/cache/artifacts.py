@@ -84,21 +84,31 @@ def chart_cache_path(settings: Settings, symbol: str) -> Path:
     return _cache_root(settings) / "charts" / f"{safe}.json"
 
 
+CHART_BUNDLE_CACHE_VERSION = 6
+
+
 def load_chart_bundle_cache(settings: Settings, symbol: str) -> Optional[dict[str, Any]]:
     path = chart_cache_path(settings, symbol)
     if not path.exists():
         return None
     try:
-        return json.loads(path.read_text())
+        cached = json.loads(path.read_text())
     except json.JSONDecodeError:
         logger.warning("invalid_chart_cache", path=str(path))
         return None
+    if cached.get("cache_version") != CHART_BUNDLE_CACHE_VERSION:
+        return None
+    return cached
 
 
 def save_chart_bundle_cache(settings: Settings, symbol: str, bundle: dict[str, Any]) -> None:
     path = chart_cache_path(settings, symbol)
     path.parent.mkdir(parents=True, exist_ok=True)
-    out = {**bundle, "cached_at": datetime.now(timezone.utc).isoformat()}
+    out = {
+        **bundle,
+        "cache_version": CHART_BUNDLE_CACHE_VERSION,
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+    }
     path.write_text(json.dumps(out))
 
 

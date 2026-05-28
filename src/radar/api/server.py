@@ -29,8 +29,16 @@ _job_runner: BackgroundJobRunner | None = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _job_runner
+    from radar.data.adapters.alphavantage import _load_project_env
+
+    _load_project_env()
     settings = get_settings()
     settings.ensure_dirs()
+    from radar.cache.artifacts import invalidate_chart_cache
+    from radar.data.adapters.alphavantage import is_configured as av_configured
+
+    if av_configured():
+        invalidate_chart_cache(settings)
     if settings.jobs.enabled and settings.jobs.run_in_api:
         _job_runner = BackgroundJobRunner(settings)
         _job_runner.start()
@@ -64,6 +72,8 @@ def meta():
     bundle = load_ensemble_bundle(settings)
     model_version = bundle.get("model_version") if bundle else None
 
+    from radar.data.adapters.alphavantage import is_configured as av_configured
+
     routes = sorted({
         route.path
         for route in app.routes
@@ -80,6 +90,7 @@ def meta():
         "predictions_cached": bool(predictions_cache and predictions_cache.get("predictions")),
         "predictions_cached_at": predictions_cache.get("cached_at") if predictions_cache else None,
         "model_version": model_version,
+        "alphavantage_configured": av_configured(),
     }
 
 

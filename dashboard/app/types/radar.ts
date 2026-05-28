@@ -35,11 +35,26 @@ export interface ChartModelPath {
   forward_bars?: number
 }
 
+export type ChartComparisonDisplay = 'markers' | 'daily_line'
+
+export interface ChartComparisonPath {
+  engine: string
+  /** markers = EOD dots on 5M/1H; daily_line = true daily series on 1D tab */
+  display?: ChartComparisonDisplay
+  points: ChartPoint[]
+  forward_bars?: number
+  return_1d?: number | null
+  last_av_date?: string
+  note?: string
+}
+
 export interface ChartSeriesResponse {
   symbol: string
   interval: ChartInterval
   points: ChartPoint[]
   model?: ChartModelPath
+  /** Alpha Vantage daily API (markers on intraday, line on 1D). */
+  comparison?: ChartComparisonPath
   forecast: ChartForecast
   validation?: ChartValidation
   meta: {
@@ -55,6 +70,9 @@ export interface ChartSeriesResponse {
     ai_p_up?: number
     ai_return_1d?: number | null
     ai_target_price_1d?: number | null
+    alphavantage_enabled?: boolean
+    alphavantage_return_1d?: number | null
+    alphavantage_error?: string | null
   }
 }
 
