@@ -1,0 +1,25 @@
+features:
+  returns:
+    windows: [1, 5, 20]
+  momentum:
+    rsi_length: 14
+    macd_fast: 12
+    macd_slow: 26
+    macd_signal: 9
+    adx_length: 14
+    roc_length: 10
+  volatility:
+    atr_length: 14
+    bbands_length: 20
+    bbands_std: 2.0
+    realized_vol_window: 20
+  volume:
+    obv_slope_window: 5
+    volume_zscore_window: 20
+  context:
+    trend_window: 20
+    beta_window: 60
+    vix_change_window: 5
+    correlation_window: 20
+  cross_section:
+    momentum_rank_window: 5

@@ -1,0 +1,10 @@
+memory:
+  enabled: true
+  store_dir: artifacts/memory
+  top_k: 5
+  min_history_days: 60
+  cluster_count: 4
+  similarity_metric: cosine
+  correlation_window: 20
+  vix_zscore_window: 20
+  vol_cluster_window: 252

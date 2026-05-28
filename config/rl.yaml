@@ -1,0 +1,19 @@
+rl:
+  enabled: true
+  models_dir: artifacts/rl
+  algorithm: ppo
+  total_timesteps: 100000
+  train_fraction: 0.7
+  max_position: 1.0
+  position_buckets: [0.0, 0.25, 0.5, 0.75, 1.0]
+  stop_atr_buckets: [1.0, 1.5, 2.0, 2.5]
+  atr_proxy_pct: 0.02
+  drawdown_window: 20
+  max_size_on_event_day: 0.25
+  reward:
+    lambda_dd: 2.0
+    dd_threshold: 0.05
+    lambda_vol: 0.5
+    lambda_turn: 0.1
+    lambda_sortino: 0.25
+    sortino_window: 20

@@ -1,0 +1,27 @@
+forecast:
+  enabled: true
+  horizon_days: 5
+  context_days: 120
+  chart_history_days: 60
+  intraday_context_bars_5m: 256
+  intraday_horizon_bars_5m: 64
+  intraday_context_bars_1h: 120
+  intraday_horizon_bars_1h: 24
+
+hybrid:
+  enabled: true
+  min_probability: 0.56
+  min_memory_win_rate: 0.52
+  require_forecast_agreement: true
+  skip_event_days: true
+  optimize_threshold: true
+  min_trades_for_threshold: 25
+  require_model_agreement: true
+  max_model_disagreement: 0.08
+  require_multi_horizon: false
+  min_momentum_rank: 0.50
+  max_vol_regime: 1
+  max_vix_level: 35.0
+  min_confluence_score: 0.0
+  top_n_per_day: 2
+  auto_optimize: false

@@ -1,0 +1,7 @@
+walkforward:
+  mode: anchored_expanding
+  min_train_days: 504
+  test_window: monthly
+  step: monthly
+  purge_days: 1
+  embargo_days: 2

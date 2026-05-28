@@ -1,0 +1,14 @@
+universe:
+  macro: ["^TNX", "^IRX", "^FVX", "HYG", "LQD", "TLT", "UUP", "^VVIX", "XLK", "SMH"]
+
+macro:
+  trend_window: 20
+  curve_symbols:
+    ten_year: "^TNX"
+    two_year: "^IRX"
+    five_year: "^FVX"
+
+events:
+  seed_path: src/radar/events/seed/macro_dates.csv
+  earnings_lookahead_days: 7
+  geo_seed_path: src/radar/events/seed/geo_flags.csv

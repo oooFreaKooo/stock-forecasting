@@ -1,0 +1,10 @@
+ensemble:
+  enabled: true
+  base_models: [lightgbm, xgboost, logistic]
+  meta_model: logistic
+  horizons: [1, 5, 20]
+  uncertainty_threshold: 0.15
+  max_single_name_weight: 0.35
+  max_gross_exposure: 1.0
+  top_n_symbols: 3
+  max_folds: 24

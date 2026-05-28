@@ -1,0 +1,32 @@
+universe:
+  traded: [AAPL, MSFT, NVDA, GOOGL, AMZN]
+  context: [SPY, QQQ, SOXX, "^VIX"]
+
+data:
+  start_date: "2018-01-01"
+  end_date: null
+  interval: "1d"
+  source: yfinance
+
+paths:
+  data_dir: data
+  artifacts_dir: artifacts
+  raw_dir: data/raw
+  processed_dir: data/processed
+  models_dir: artifacts/models
+  reports_dir: artifacts/reports
+
+model:
+  type: lightgbm
+  direction_threshold: 0.55
+  transaction_cost_bps: 5.0
+  val_fraction: 0.1
+  random_seed: 42
+
+labels:
+  direction_min_move_pct: 0.001
+  vol_regime_window: 20
+
+backtest:
+  signal_threshold: 0.55
+  initial_capital: 1000000.0

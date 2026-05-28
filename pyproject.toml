@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "radar"
+version = "0.1.0"
+description = "Hybrid AI Investment Radar — supervised prediction with walk-forward validation"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "yfinance>=0.2.40",
+    "pandas>=2.1",
+    "numpy>=1.26",
+    "pyarrow>=14.0",
+    "pandas-ta-classic>=0.3.14",
+    "lightgbm>=4.3",
+    "scikit-learn>=1.4",
+    "pyyaml>=6.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "structlog>=24.1",
+    "matplotlib>=3.8",
+    "seaborn>=0.13",
+    "joblib>=1.3",
+    "chromadb>=0.5",
+    "gymnasium>=0.29",
+    "stable-baselines3>=2.3",
+    "xgboost>=2.0",
+    "feedparser>=6.0",
+    "vaderSentiment>=3.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.1",
+]
+forecast = [
+    "chronos-forecasting>=1.4",
+    "torch>=2.0",
+]
+api = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+]
+
+[project.scripts]
+radar-fetch = "radar.cli.fetch_data:main"
+radar-features = "radar.cli.build_features:main"
+radar-train = "radar.cli.train:main"
+radar-backtest = "radar.cli.backtest:main"
+radar-memory = "radar.cli.build_memory_index:main"
+radar-train-rl = "radar.cli.train_rl:main"
+radar-eval-rl = "radar.cli.evaluate_rl:main"
+radar-events = "radar.cli.build_event_calendar:main"
+radar-ablation = "radar.cli.ablation:main"
+radar-sentiment = "radar.cli.build_sentiment_index:main"
+radar-ensemble = "radar.cli.train_ensemble:main"
+radar-pipeline = "radar.cli.run_pipeline:main"
+radar-predict = "radar.cli.predict:main"
+radar-api = "radar.api.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
