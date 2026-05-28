@@ -50,8 +50,8 @@ def compute_expectancy(
 
     pw = wins.mean() if len(wins) else 0.0
     pl = 1.0 - pw
-    aw = float(win_returns.mean()) if len(win_returns) else 0.0
-    al = float(abs(loss_returns.mean())) if len(loss_returns) else 0.0
+    aw = float(np.nanmean(win_returns)) if len(win_returns) else 0.0
+    al = float(abs(np.nanmean(loss_returns))) if len(loss_returns) else 0.0
 
     expectancy = (pw * aw) - (pl * al)
     gross_profit = win_returns.sum() if len(win_returns) else 0.0

@@ -12,6 +12,8 @@ pip install -e ".[dev]"
 
 # macOS: LightGBM requires libomp (one-time)
 brew install libomp
+
+# Activate venv + libomp path + thread limits (run before train/backtest/predict)
 source scripts/env.sh
 
 # 1. Fetch market data (yfinance)
@@ -26,6 +28,8 @@ python -m radar.cli.train --config config/walkforward.yaml
 # 4. Run expectancy backtest + report
 python -m radar.cli.backtest --report
 ```
+
+If `python` is not found after `source scripts/env.sh`, the venv was likely moved — recreate it in this repo: `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`.
 
 ## Universe
 
@@ -118,6 +122,20 @@ python -m radar.cli.run_pipeline --full
 Strict anchored expanding walk-forward splits — no random cross-validation or shuffling.
 
 Expectancy: `E = (P_w × A_w) - (P_l × A_l)`
+
+## Dashboard (Nuxt)
+
+Live UI for gated signals, forecast charts, and news. See [dashboard/README.md](dashboard/README.md).
+
+```bash
+# Terminal 1 — API (from repo root)
+source scripts/env.sh && bash scripts/start-api.sh
+
+# Terminal 2 — dashboard (auto-starts API in dev if offline)
+cd dashboard && yarn install && yarn dev
+```
+
+Open http://localhost:3000 (API on port 8000).
 
 ## Tests
 

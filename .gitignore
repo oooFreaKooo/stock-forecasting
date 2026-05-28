@@ -19,3 +19,4 @@ artifacts/
 htmlcov/
 *.ipynb_checkpoints/
 .DS_Store
+.yarn

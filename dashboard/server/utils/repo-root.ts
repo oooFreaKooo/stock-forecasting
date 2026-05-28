@@ -23,6 +23,6 @@ export function repoRoot(): string {
 
   throw createError({
     statusCode: 500,
-    statusMessage: 'Could not locate TradingBot repo root (scripts/ensure-api.sh)',
+    statusMessage: 'Could not locate Radar repo root (scripts/ensure-api.sh)',
   })
 }

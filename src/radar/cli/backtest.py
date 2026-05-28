@@ -38,7 +38,6 @@ def main() -> None:
     predictions = load_oos_predictions(settings)
 
     if args.gated:
-        from pathlib import Path
         import pandas as pd
 
         panel_path = Path(settings.paths.processed_dir) / "feature_panel.parquet"
