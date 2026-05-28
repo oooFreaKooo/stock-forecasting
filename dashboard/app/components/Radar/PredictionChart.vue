@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import type { ApexOptions } from 'apexcharts'
-import type { ChartInterval, ChartPoint, ChartSeriesResponse, Prediction } from '~/types/radar'
+import type {
+  ChartInterval,
+  ChartPoint,
+  ChartSeriesResponse,
+  ChartValidationMetrics,
+  Prediction,
+} from '~/types/radar'
 import {
   formatChartIntradayAxis,
   formatChartIntradayDetail,
@@ -26,7 +32,10 @@ const loadError = ref<string | null>(null)
 
 const pricePoints = shallowRef<LinePoint[]>([])
 const forecastPoints = shallowRef<LinePoint[]>([])
+const validationPoints = shallowRef<LinePoint[]>([])
+const validationMetrics = ref<ChartValidationMetrics | null>(null)
 const tooltipDates = shallowRef<string[]>([])
+const useCalendarAxis = ref(false)
 const axisStepMs = shallowRef(300_000)
 const forecastMarkerX = shallowRef<number | null>(null)
 const chartRef = useTemplateRef<{ chart?: ChartRef }>('chart')
@@ -36,39 +45,27 @@ let fetchAbort: AbortController | null = null
 const INTERVALS: { value: ChartInterval; label: string; stepMs: number; defaultBars: number }[] = [
   { value: '5m', label: '5M', stepMs: 300_000, defaultBars: 156 },
   { value: '1h', label: '1H', stepMs: 3_600_000, defaultBars: 48 },
+  { value: '1d', label: '1D', stepMs: 86_400_000, defaultBars: 90 },
 ]
 
 const STEP_BY_INTERVAL = Object.fromEntries(INTERVALS.map(i => [i.value, i.stepMs])) as Record<ChartInterval, number>
 const DEFAULT_BARS = Object.fromEntries(INTERVALS.map(i => [i.value, i.defaultBars])) as Record<ChartInterval, number>
-
-/** Equal-spaced x-axis — removes overnight/weekend visual gaps; real times live in tooltipDates. */
-const SYNTHETIC_BASE_MS = Date.UTC(2020, 0, 1)
 
 const barCount = computed(() => pricePoints.value.length)
 const forecastBarCount = computed(() => Math.max(0, forecastPoints.value.length - 1))
 const hasData = computed(() => pricePoints.value.length > 0)
 const chartKey = computed(() => `${props.prediction.symbol}-${interval.value}-${props.reloadToken ?? 0}`)
 
-function synthX(index: number, stepMs: number): number {
-  return SYNTHETIC_BASE_MS + index * stepMs
+function parseUtcMs(iso: string): number {
+  return Date.parse(iso.endsWith('Z') ? iso : `${iso}Z`)
 }
 
-function indexFromSynthX(x: number, stepMs: number): number {
-  return Math.round((x - SYNTHETIC_BASE_MS) / stepMs)
+function labelForAxisX(x: number): string {
+  return formatChartIntradayAxis(new Date(x).toISOString(), interval.value !== '5m')
 }
 
-function labelForSynthX(x: number): string {
-  const idx = indexFromSynthX(x, axisStepMs.value)
-  const date = tooltipDates.value[idx]
-  if (!date) return ''
-  const showDate = interval.value === '1h' || idx === 0 || idx === tooltipDates.value.length - 1
-  return formatChartIntradayAxis(date, showDate)
-}
-
-function tooltipForSynthX(x: number): string {
-  const idx = indexFromSynthX(x, axisStepMs.value)
-  const date = tooltipDates.value[idx]
-  return date ? formatChartIntradayDetail(date) : ''
+function tooltipForAxisX(x: number): string {
+  return formatChartIntradayDetail(new Date(x).toISOString())
 }
 
 function computeBounds(points: LinePoint[]): { min: number; max: number } | null {
@@ -82,7 +79,11 @@ function computeBounds(points: LinePoint[]): { min: number; max: number } | null
 
 function boundsForXRange(minX: number, maxX: number): { min: number; max: number } | null {
   const inRange = (pts: LinePoint[]) => pts.filter(p => p.x >= minX && p.x <= maxX)
-  return computeBounds([...inRange(pricePoints.value), ...inRange(forecastPoints.value)])
+  return computeBounds([
+    ...inRange(pricePoints.value),
+    ...inRange(validationPoints.value),
+    ...inRange(forecastPoints.value),
+  ])
 }
 
 type ChartRef = {
@@ -96,20 +97,21 @@ function fitYAxis(chart: ChartRef, minX: number, maxX: number) {
   chart.updateOptions({ yaxis: { min: bounds.min, max: bounds.max } }, false, false, false)
 }
 
-function defaultXRange(stepMs: number, priceBars: number, forecastBars: number): { min: number; max: number } {
-  const window = Math.min(DEFAULT_BARS[interval.value], priceBars)
-  const startIdx = Math.max(0, priceBars - window)
-  const endIdx = priceBars - 1 + forecastBars
+function defaultXRange(prices: LinePoint[], stepMs: number, forecastBars: number): { min: number; max: number } {
+  const window = Math.min(DEFAULT_BARS[interval.value], prices.length)
+  const slice = prices.slice(Math.max(0, prices.length - window))
+  const start = slice[0]?.x ?? prices[0]!.x
+  const end = prices[prices.length - 1]!.x
   return {
-    min: synthX(startIdx, stepMs) - stepMs * 0.5,
-    max: synthX(endIdx, stepMs) + stepMs * 0.5,
+    min: start - stepMs * 0.5,
+    max: end + forecastBars * stepMs + stepMs * 0.5,
   }
 }
 
 function fitDefaultView(chart: ChartRef) {
   const priceBars = pricePoints.value.length
   if (!priceBars) return
-  const { min, max } = defaultXRange(axisStepMs.value, priceBars, forecastBarCount.value)
+  const { min, max } = defaultXRange(pricePoints.value, axisStepMs.value, forecastBarCount.value)
   chart.zoomX(min, max)
   fitYAxis(chart, min, max)
 }
@@ -117,19 +119,18 @@ function fitDefaultView(chart: ChartRef) {
 function buildChartData(
   history: ChartPoint[],
   forecast: ChartPoint[],
+  validation: ChartPoint[],
   iv: ChartInterval,
 ) {
   const stepMs = STEP_BY_INTERVAL[iv]
   axisStepMs.value = stepMs
+  useCalendarAxis.value = true
 
-  const dates: string[] = []
   const prices: LinePoint[] = []
-
-  for (let i = 0; i < history.length; i++) {
-    const close = roundPrice(history[i]!.close)
+  for (const bar of history) {
+    const close = roundPrice(bar.close)
     if (close == null) continue
-    dates[i] = history[i]!.date
-    prices.push({ x: synthX(i, stepMs), y: close })
+    prices.push({ x: parseUtcMs(bar.date), y: close })
   }
 
   const forecastLine: LinePoint[] = []
@@ -137,37 +138,64 @@ function buildChartData(
   const lastPoint = prices.at(-1)
 
   if (lastPoint && forecast.length) {
-    const bridgeIdx = prices.length - 1
     markerX = lastPoint.x
     forecastLine.push(lastPoint)
 
-    for (let i = 0; i < forecast.length; i++) {
-      const close = roundPrice(forecast[i]!.close)
+    for (const bar of forecast) {
+      const close = roundPrice(bar.close)
       if (close == null) continue
-      const idx = bridgeIdx + 1 + i
-      dates[idx] = forecast[i]!.date
-      forecastLine.push({ x: synthX(idx, stepMs), y: close })
+      forecastLine.push({ x: parseUtcMs(bar.date), y: close })
     }
   }
 
-  tooltipDates.value = dates
+  const validationLine: LinePoint[] = []
+  for (const pt of validation) {
+    const close = roundPrice(pt.close)
+    if (close == null) continue
+    validationLine.push({ x: parseUtcMs(pt.date), y: close })
+  }
+
+  tooltipDates.value = []
   pricePoints.value = prices
   forecastPoints.value = forecastLine
+  validationPoints.value = validationLine
   forecastMarkerX.value = markerX
 }
 
+const validationSummary = computed(() => {
+  const m = validationMetrics.value
+  if (!m || !m.n_points) return null
+  const dir = m.direction_accuracy != null ? `${(m.direction_accuracy * 100).toFixed(1)}% dir` : null
+  const mae = m.mae != null ? `MAE ${formatPrice(m.mae)}` : null
+  return [mae, dir].filter(Boolean).join(' · ')
+})
+
 const chartSeries = computed<ApexOptions['series']>(() => {
   const series: ApexOptions['series'] = [
-    { name: 'Price', type: 'line', data: pricePoints.value },
+    { name: 'Actual', type: 'line', data: pricePoints.value },
   ]
+  if (validationPoints.value.length) {
+    series.push({
+      name: 'Backtest forecast',
+      type: 'line',
+      data: validationPoints.value,
+    })
+  }
   if (forecastPoints.value.length) {
     series.push({
-      name: `Forecast (${forecastEngine.value ?? 'baseline'})`,
+      name: `Forward forecast (${forecastEngine.value ?? 'baseline'})`,
       type: 'line',
       data: forecastPoints.value,
     })
   }
   return series
+})
+
+const seriesStroke = computed(() => {
+  const n = chartSeries.value?.length ?? 1
+  if (n >= 3) return { width: [2, 2, 2.5] as number[], dash: [0, 5, 6] as number[] }
+  if (n === 2) return { width: [2, 2.5] as number[], dash: [0, 6] as number[] }
+  return { width: [2] as number[], dash: [0] as number[] }
 })
 
 const chartOptions = computed<ApexOptions>(() => ({
@@ -217,11 +245,11 @@ const chartOptions = computed<ApexOptions>(() => ({
     },
   },
   stroke: {
-    width: [2, 2.5],
+    width: seriesStroke.value.width,
     curve: 'straight',
-    dashArray: [0, 6],
+    dashArray: seriesStroke.value.dash,
   },
-  colors: ['#2563eb', '#f97316'],
+  colors: ['#2563eb', '#8b5cf6', '#f97316'],
   grid: {
     borderColor: 'var(--color-border)',
     strokeDashArray: 4,
@@ -235,7 +263,7 @@ const chartOptions = computed<ApexOptions>(() => ({
       hideOverlappingLabels: true,
       rotate: -35,
       style: { fontSize: '11px' },
-      formatter: (val: string) => labelForSynthX(Number(val)),
+      formatter: (val: string) => labelForAxisX(Number(val)),
     },
     crosshairs: {
       show: true,
@@ -258,7 +286,7 @@ const chartOptions = computed<ApexOptions>(() => ({
     tooltip: { enabled: false },
   },
   legend: {
-    show: forecastPoints.value.length > 0,
+    show: forecastPoints.value.length > 0 || validationPoints.value.length > 0,
     position: 'top',
     horizontalAlign: 'left',
   },
@@ -273,7 +301,7 @@ const chartOptions = computed<ApexOptions>(() => ({
     followCursor: true,
     hideEmptySeries: true,
     fixed: { enabled: false },
-    x: { show: true, formatter: (val: number) => tooltipForSynthX(val) },
+    x: { show: true, formatter: (val: number) => tooltipForAxisX(val) },
     y: { formatter: (v: number) => formatPrice(v) },
     marker: { show: true },
   },
@@ -305,9 +333,15 @@ async function loadChart() {
   try {
     const res = await api.fetchChartSeries(symbol, iv)
     if (fetchAbort.signal.aborted) return
-    buildChartData(res.points, res.forecast?.points ?? [], iv)
+    buildChartData(
+      res.points,
+      res.forecast?.points ?? [],
+      res.validation?.points ?? [],
+      iv,
+    )
     chartMeta.value = res.meta
     forecastEngine.value = res.forecast?.engine ?? res.meta.forecast_engine ?? null
+    validationMetrics.value = res.validation?.metrics ?? null
   } catch (e: unknown) {
     if (fetchAbort.signal.aborted) return
     const raw = e instanceof Error ? e.message : 'Failed to load chart data'
@@ -316,6 +350,8 @@ async function loadChart() {
       : raw
     pricePoints.value = []
     forecastPoints.value = []
+    validationPoints.value = []
+    validationMetrics.value = null
     tooltipDates.value = []
     chartMeta.value = null
     forecastEngine.value = null
@@ -364,13 +400,16 @@ onBeforeUnmount(() => {
             {{ prediction.forecast_return_1d != null ? `${(prediction.forecast_return_1d * 100).toFixed(2)}%` : '—' }}
           </span>
         </div>
+        <div v-if="validationSummary" class="text-violet-600 dark:text-violet-400">
+          Backtest: {{ validationSummary }}
+        </div>
         <div v-if="chartMeta" class="text-muted-foreground">
-          {{ chartMeta.rows }} bars · {{ chartMeta.forecast_bars ?? 0 }} forecast · {{ forecastEngine ?? chartMeta.forecast_engine }}
+          {{ chartMeta.rows }} bars · {{ chartMeta.validation_bars ?? 0 }} backtest · {{ chartMeta.forecast_bars ?? 0 }} forward
         </div>
       </div>
 
       <UiTabs v-model="interval" class="w-full sm:w-auto">
-        <UiTabsList class="grid w-full grid-cols-2 sm:w-auto">
+        <UiTabsList class="grid w-full grid-cols-3 sm:w-auto">
           <UiTabsTrigger v-for="item in INTERVALS" :key="item.value" :value="item.value">
             {{ item.label }}
           </UiTabsTrigger>
@@ -379,7 +418,12 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="text-xs text-muted-foreground">
-      Times shown in Europe/Berlin · trading hours 10:00–02:00 only · bars evenly spaced (no overnight/weekend gaps)
+      <template v-if="interval === '1d'">
+        Blue = actual daily close · Purple dashed = walk-forward backtest (last 30 sessions, no look-ahead) · Orange = forward forecast.
+      </template>
+      <template v-else>
+        Axis uses real UTC timestamps (Europe/Berlin in tooltips) · purple = walk-forward backtest aligned to each bar.
+      </template>
       <span v-if="chartMeta?.note"> — {{ chartMeta.note }}</span>
     </p>
 

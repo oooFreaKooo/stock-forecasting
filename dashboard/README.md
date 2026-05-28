@@ -8,6 +8,13 @@
 
 ## Setup
 
+From repo root (API extras required for the dashboard backend):
+
+```bash
+source scripts/env.sh
+pip install -e ".[dev,api]"
+```
+
 ```bash
 cd dashboard
 yarn install
@@ -15,7 +22,7 @@ yarn install
 
 ## Run
 
-**Terminal 1 — Nuxt dashboard** (auto-starts the Python API when offline):
+From `dashboard/`, `yarn dev` **restarts the Python API** (`source scripts/env.sh && bash scripts/restart-api.sh`) and then starts Nuxt:
 
 ```bash
 cd dashboard
@@ -24,13 +31,7 @@ yarn dev
 
 Open [http://localhost:3000](http://localhost:3000)
 
-Optional — start the API manually from repo root:
-
-```bash
-source scripts/env.sh && bash scripts/start-api.sh
-```
-
-The dashboard polls API health and runs `scripts/ensure-api.sh` in the background when the Python API is down or outdated. Python code changes reload automatically in dev (`RADAR_API_RELOAD=1`).
+If the API fails to start, check `/tmp/radar-api.log`. The dashboard still polls health and can trigger `scripts/ensure-api.sh` when the API goes offline later in the session.
 
 ## Features
 

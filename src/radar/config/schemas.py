@@ -51,8 +51,11 @@ class ForecastConfig(BaseModel):
     chart_history_days: int = 90
     intraday_context_bars_5m: int = 256
     intraday_horizon_bars_5m: int = 78
+    intraday_validation_horizon_5m: int = 20
     intraday_context_bars_1h: int = 120
     intraday_horizon_bars_1h: int = 24
+    intraday_validation_horizon_1h: int = 8
+    intraday_ensemble_blend: float = 0.65
 
 
 class HybridConfig(BaseModel):

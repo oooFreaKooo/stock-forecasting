@@ -3,7 +3,7 @@ export interface ChartPoint {
   close: number
 }
 
-export type ChartInterval = '5m' | '1h'
+export type ChartInterval = '5m' | '1h' | '1d'
 
 export interface ChartForecast {
   engine: string
@@ -11,11 +11,29 @@ export interface ChartForecast {
   points: ChartPoint[]
 }
 
+export interface ChartValidationMetrics {
+  mae: number | null
+  mape: number | null
+  rmse: number | null
+  direction_accuracy: number | null
+  n_points: number
+  validation_days?: number
+  validation_bars?: number
+  anchor_date?: string
+}
+
+export interface ChartValidation {
+  engine: string
+  points: ChartPoint[]
+  metrics: ChartValidationMetrics
+}
+
 export interface ChartSeriesResponse {
   symbol: string
   interval: ChartInterval
   points: ChartPoint[]
   forecast: ChartForecast
+  validation?: ChartValidation
   meta: {
     source: string
     rows: number
@@ -24,6 +42,7 @@ export interface ChartSeriesResponse {
     limit?: number
     forecast_engine?: string
     forecast_bars?: number
+    validation_bars?: number
   }
 }
 

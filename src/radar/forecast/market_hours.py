@@ -12,6 +12,10 @@ UTC = ZoneInfo("UTC")
 OVERNIGHT_GAP_START = time(2, 0)
 OVERNIGHT_GAP_END = time(10, 0)
 
+# US cash session open on German brokers (09:30 ET → 15:30 Europe/Berlin).
+NYSE_CASH_OPEN_BERLIN = time(15, 30)
+NYSE_OPEN_WINDOW_END_BERLIN = time(17, 0)
+
 STEP_DELTAS = {
     "5m": pd.Timedelta(minutes=5),
     "1h": pd.Timedelta(hours=1),
@@ -36,6 +40,16 @@ def is_valid_trading_time(ts_utc: pd.Timestamp) -> bool:
     """True during pre/regular/post market in Berlin: 10:00–24:00 and 00:00–02:00."""
     t = berlin_time(ts_utc)
     return t >= OVERNIGHT_GAP_END or t < OVERNIGHT_GAP_START
+
+
+def is_cash_open_window(ts_utc: pd.Timestamp) -> bool:
+    """First ~90 minutes of US regular session (15:30–17:00 Europe/Berlin)."""
+    t = berlin_time(ts_utc)
+    return NYSE_CASH_OPEN_BERLIN <= t < NYSE_OPEN_WINDOW_END_BERLIN
+
+
+def berlin_calendar_date(ts_utc: pd.Timestamp):
+    return to_utc_naive(ts_utc).tz_localize(UTC).tz_convert(BERLIN).date()
 
 
 def _snap_to_berlin_premarket(ts_utc: pd.Timestamp) -> pd.Timestamp:

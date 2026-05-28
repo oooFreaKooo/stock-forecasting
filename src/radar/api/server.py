@@ -90,7 +90,7 @@ def performance():
 @app.get("/api/chart/{symbol}")
 def chart_series(
     symbol: str,
-    interval: str = Query("5m", description="5m or 1h"),
+    interval: str = Query("5m", description="5m, 1h, or 1d"),
     limit: Optional[int] = Query(None, ge=10, le=5000),
 ):
     if interval.lower() not in SUPPORTED_INTERVALS:

@@ -8,7 +8,7 @@ Phase 1 implementation: supervised directional prediction with anchored walk-for
 # Create virtual environment and install
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev,api]"
 
 # macOS: LightGBM requires libomp (one-time)
 brew install libomp
@@ -29,7 +29,7 @@ python -m radar.cli.train --config config/walkforward.yaml
 python -m radar.cli.backtest --report
 ```
 
-If `python` is not found after `source scripts/env.sh`, the venv was likely moved — recreate it in this repo: `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev]"`.
+If `python` is not found after `source scripts/env.sh`, the venv was likely moved — recreate it in this repo: `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && pip install -e ".[dev,api]"`.
 
 ## Universe
 

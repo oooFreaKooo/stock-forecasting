@@ -19,10 +19,18 @@ if curl -sf "http://127.0.0.1:${PORT}/health" >/dev/null 2>&1; then
     exit 0
   fi
   "$ROOT/scripts/stop-api.sh"
+elif lsof -ti:"$PORT" >/dev/null 2>&1; then
+  echo "Port ${PORT} in use but /health failed — stopping stale process..." >&2
+  "$ROOT/scripts/stop-api.sh"
 fi
 
 if lsof -ti:"$PORT" >/dev/null 2>&1; then
   echo "Port ${PORT} is still in use. Close the process using it and retry." >&2
+  exit 1
+fi
+
+if ! python -c "import fastapi, uvicorn" 2>/dev/null; then
+  echo "API dependencies missing. From repo root run: pip install -e \".[api]\"" >&2
   exit 1
 fi
 

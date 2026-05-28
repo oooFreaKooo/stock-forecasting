@@ -5,6 +5,8 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
+from radar.forecast.market_hours import NYSE_CASH_OPEN_BERLIN, berlin_calendar_date, berlin_time
+
 
 @dataclass
 class IntradayTimingResult:
@@ -50,14 +52,30 @@ def compute_intraday_timing(
     vwap = _compute_vwap(frame)
     vwap_distance = (last - vwap) / vwap if vwap else 0.0
 
-    session_open = float(close.iloc[0])
-    session_high = float(close.max())
-    session_low = float(close.min())
+    frame["date"] = pd.to_datetime(frame["date"])
+    latest_day = berlin_calendar_date(frame["date"].iloc[-1])
+    today = frame[frame["date"].apply(lambda d: berlin_calendar_date(d) == latest_day)]
+    after_open = today[today["date"].apply(lambda d: berlin_time(d) >= NYSE_CASH_OPEN_BERLIN)]
+
+    if not after_open.empty:
+        session_open = float(after_open["close"].iloc[0])
+        session_high = float(after_open["close"].max())
+        session_low = float(after_open["close"].min())
+        open_closes = after_open["close"].astype(float)
+        split = min(12, max(3, len(open_closes) // 4))
+        first_hour_momentum = (
+            float(open_closes.iloc[split - 1] / open_closes.iloc[0] - 1)
+            if len(open_closes) >= split
+            else 0.0
+        )
+    else:
+        session_open = float(close.iloc[-1])
+        session_high = float(close.max())
+        session_low = float(close.min())
+        first_hour_momentum = 0.0
+
     opening_range = max(session_high - session_low, 1e-6)
     opening_range_breakout = (last - session_open) / opening_range
-
-    split = min(12, max(3, len(close) // 4))
-    first_hour_momentum = float(close.iloc[split - 1] / close.iloc[0] - 1) if len(close) >= split else 0.0
 
     if "volume" in frame.columns:
         vol = frame["volume"].astype(float)
