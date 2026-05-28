@@ -19,25 +19,29 @@ def get_data_source(source_name: str) -> DataSource:
     raise ValueError(f"Unknown data source: {source_name}")
 
 
-def fetch_and_store(settings: Settings) -> dict[str, int]:
-    """Fetch all symbols and persist to parquet."""
-    settings.ensure_dirs()
-    source = get_data_source(settings.data.source)
-    store = ParquetStore(settings.paths.raw_dir)
+def fetch_and_store(settings: Settings, *, full: bool = False) -> dict[str, int]:
+    """Fetch symbols and persist to parquet (incremental by default)."""
+    from radar.data.incremental_fetch import fetch_daily_incremental
 
-    symbols = settings.all_symbols
-    frames = source.fetch_many(
-        symbols=symbols,
-        start=settings.data.start_date,
-        end=settings.data.end_date,
-        interval=settings.data.interval,
-    )
+    if full:
+        settings.ensure_dirs()
+        source = get_data_source(settings.data.source)
+        store = ParquetStore(settings.paths.raw_dir)
 
-    results: dict[str, int] = {}
-    for symbol, df in frames.items():
-        validated = validate_ohlcv(df, symbol)
-        store.write(symbol, validated)
-        results[symbol] = len(validated)
-        logger.info("stored_symbol", symbol=symbol, rows=len(validated))
+        symbols = settings.all_symbols
+        frames = source.fetch_many(
+            symbols=symbols,
+            start=settings.data.start_date,
+            end=settings.data.end_date,
+            interval=settings.data.interval,
+        )
 
-    return results
+        results: dict[str, int] = {}
+        for symbol, df in frames.items():
+            validated = validate_ohlcv(df, symbol)
+            store.write(symbol, validated, rows_added=len(validated))
+            results[symbol] = len(validated)
+            logger.info("stored_symbol_full", symbol=symbol, rows=len(validated))
+        return results
+
+    return fetch_daily_incremental(settings)

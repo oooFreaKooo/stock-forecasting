@@ -38,9 +38,15 @@ def test_refresh_live_news_structure(tmp_path, monkeypatch):
         },
     ])
 
-    monkeypatch.setattr("radar.nlp.live_news.fetch_rss_headlines", lambda feeds: headlines)
+    def _fake_incremental(feed_urls, state, **kwargs):
+        return headlines, state, len(headlines)
 
-    payload = refresh_live_news(settings, persist=True)
+    monkeypatch.setattr(
+        "radar.nlp.live_news.fetch_rss_headlines_incremental",
+        _fake_incremental,
+    )
+
+    payload = refresh_live_news(settings, persist=True, incremental=True)
 
     assert payload["headline_count"] == 2
     assert "AAPL" in payload["symbols"]

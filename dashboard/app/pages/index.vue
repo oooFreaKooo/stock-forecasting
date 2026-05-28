@@ -4,6 +4,7 @@ import type { ApiStatus, NewsSnapshot, PerformanceMetrics, Prediction } from '~/
 const api = useRadarApi()
 
 const refreshing = ref(false)
+const warmingUp = ref(false)
 const error = ref<string | null>(null)
 const predictions = ref<Prediction[]>([])
 const metrics = ref<PerformanceMetrics | null>(null)
@@ -13,8 +14,10 @@ const apiStarting = ref(false)
 const selectedSymbol = ref('AAPL')
 const lastFetched = ref<string | null>(null)
 const chartReloadToken = ref(0)
+const bootstrapping = ref(true)
 
 let autoStartTimer: ReturnType<typeof setInterval> | null = null
+let predictionsPollTimer: ReturnType<typeof setInterval> | null = null
 
 const apiOnline = computed(() => apiStatus.value?.online === true)
 
@@ -24,6 +27,7 @@ const apiNeedsReload = computed(() =>
 
 const apiStatusLabel = computed(() => {
   if (apiStarting.value) return 'API starting…'
+  if (warmingUp.value) return 'Loading predictions…'
   if (!apiStatus.value?.online) return 'API offline'
   if (apiNeedsReload.value) return 'API reloading…'
   return `API v${apiStatus.value.version ?? '?'}`
@@ -32,6 +36,13 @@ const apiStatusLabel = computed(() => {
 const selectedPrediction = computed(() =>
   predictions.value.find(p => p.symbol === selectedSymbol.value) ?? predictions.value[0] ?? null,
 )
+
+function applyPredictions(items: Prediction[]) {
+  predictions.value = items.filter(p => !p.error)
+  if (predictions.value.length && !predictions.value.find(p => p.symbol === selectedSymbol.value)) {
+    selectedSymbol.value = predictions.value[0]!.symbol
+  }
+}
 
 async function waitForApiOnline(maxAttempts = 80) {
   for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
@@ -43,31 +54,91 @@ async function waitForApiOnline(maxAttempts = 80) {
 }
 
 async function loadCachedState() {
-  if (!apiOnline.value) return
+  if (!apiOnline.value) return false
   try {
     const [predRes, newsRes] = await Promise.all([
       api.fetchPredictions(),
       api.fetchNews(),
     ])
-    predictions.value = predRes.predictions.filter(p => !p.error)
+    applyPredictions(predRes.predictions)
     news.value = newsRes
-    try {
-      metrics.value = await api.fetchPerformance()
-    } catch {
-      // backtest metrics optional until ensemble is trained
-    }
+    await loadMetrics()
+    return predictions.value.length > 0
   } catch (e: unknown) {
     error.value = e instanceof Error ? e.message : 'Failed to load dashboard'
+    return false
   }
+}
+
+async function loadMetrics() {
+  try {
+    metrics.value = await api.fetchPerformance()
+  } catch {
+    // optional until ensemble OOS artifacts exist
+  }
+}
+
+async function bootstrapIfNeeded() {
+  if (!apiOnline.value || predictions.value.length) return true
+
+  warmingUp.value = true
+  error.value = null
+  try {
+    const res = await api.bootstrapDashboard()
+    applyPredictions(res.predictions)
+    news.value = res.news
+    if (res.cached_at) {
+      lastFetched.value = res.cached_at
+    }
+    if (res.metrics) {
+      metrics.value = res.metrics
+    } else {
+      await loadMetrics()
+    }
+    return predictions.value.length > 0
+  } catch (e: unknown) {
+    error.value = e instanceof Error ? e.message : 'Failed to load predictions'
+    return false
+  } finally {
+    warmingUp.value = false
+  }
+}
+
+function stopPredictionsPoll() {
+  if (predictionsPollTimer) {
+    clearInterval(predictionsPollTimer)
+    predictionsPollTimer = null
+  }
+}
+
+function startPredictionsPoll(maxAttempts = 24) {
+  stopPredictionsPoll()
+  let attempts = 0
+  predictionsPollTimer = setInterval(async () => {
+    attempts += 1
+    if (predictions.value.length || !apiOnline.value) {
+      stopPredictionsPoll()
+      return
+    }
+    await loadCachedState()
+    if (predictions.value.length || attempts >= maxAttempts) {
+      stopPredictionsPoll()
+      if (!predictions.value.length && !error.value) {
+        error.value =
+          'Predictions are still warming up. Use “Refresh Data & Predictions” for a full update, or wait a minute and reload.'
+      }
+    }
+  }, 5_000)
 }
 
 async function refreshAll() {
   if (!apiOnline.value) return
   refreshing.value = true
   error.value = null
+  stopPredictionsPoll()
   try {
     const res = await api.refreshDashboard()
-    predictions.value = res.predictions.filter(p => !p.error)
+    applyPredictions(res.predictions)
     news.value = res.news
     metrics.value = res.metrics
     lastFetched.value = new Date().toISOString()
@@ -94,43 +165,71 @@ async function loadApiStatus() {
 }
 
 async function ensureApiRunning() {
-  if (apiStarting.value) return apiOnline.value
+  if (apiStarting.value) {
+    if (apiOnline.value) await loadCachedState()
+    return apiOnline.value
+  }
 
   await loadApiStatus()
-  if (apiOnline.value && !apiNeedsReload.value) {
-    return true
+  const alreadyOnline = apiOnline.value && !apiNeedsReload.value
+
+  if (!alreadyOnline) {
+    apiStarting.value = true
+    error.value = null
+    try {
+      await api.ensureApi(apiNeedsReload.value)
+      const ready = await waitForApiOnline()
+      if (!ready) {
+        error.value = 'API did not start. Check /tmp/radar-api.log'
+        return false
+      }
+    } catch (e: unknown) {
+      error.value = e instanceof Error ? e.message : 'Failed to start API'
+      return false
+    } finally {
+      apiStarting.value = false
+    }
   }
 
-  apiStarting.value = true
-  error.value = null
-  try {
-    await api.ensureApi(apiNeedsReload.value)
-    const ready = await waitForApiOnline()
-    if (!ready) {
-      error.value = 'API did not start. Check /tmp/radar-api.log'
-      return false
-    }
-    await loadCachedState()
-    return true
-  } catch (e: unknown) {
-    error.value = e instanceof Error ? e.message : 'Failed to start API'
+  if (!apiOnline.value || apiNeedsReload.value) {
     return false
-  } finally {
-    apiStarting.value = false
   }
+
+  await loadCachedState()
+  return true
 }
 
 onMounted(async () => {
-  await ensureApiRunning()
+  bootstrapping.value = true
+  error.value = null
+  try {
+    const ready = await ensureApiRunning()
+    if (!ready) return
+
+    if (!predictions.value.length) {
+      const loaded = await bootstrapIfNeeded()
+      if (!loaded) {
+        startPredictionsPoll()
+      }
+    }
+  } finally {
+    bootstrapping.value = false
+  }
+
   autoStartTimer = setInterval(async () => {
     if (!apiOnline.value || apiNeedsReload.value) {
       await ensureApiRunning()
+      return
+    }
+    if (!predictions.value.length) {
+      await loadCachedState()
     }
   }, 8_000)
 })
 
 onUnmounted(() => {
   if (autoStartTimer) clearInterval(autoStartTimer)
+  stopPredictionsPoll()
 })
 </script>
 
@@ -154,6 +253,9 @@ onUnmounted(() => {
                 </UiBadge>
                 <span v-if="lastFetched" class="text-xs text-muted-foreground">
                   data refreshed {{ new Date(lastFetched).toLocaleString() }}
+                </span>
+                <span v-else-if="apiStatus?.predictions_cached_at" class="text-xs text-muted-foreground">
+                  cached {{ new Date(apiStatus.predictions_cached_at).toLocaleString() }}
                 </span>
                 <span v-else-if="apiStatus?.started_at" class="text-xs text-muted-foreground">
                   API started {{ new Date(apiStatus.started_at).toLocaleString() }}
@@ -179,13 +281,13 @@ onUnmounted(() => {
           <UiCardContent class="pt-6 text-sm text-red-700 dark:text-red-300">
             {{ error }}
             <p class="mt-2 text-xs text-muted-foreground">
-              Refresh fetches latest prices, rebuilds features, and rescored signals. Logs:
+              Full refresh fetches latest prices and rebuilds features. Logs:
               <code class="rounded bg-black/10 px-1">/tmp/radar-api.log</code>
             </p>
           </UiCardContent>
         </UiCard>
 
-        <RadarStatsBar :metrics="metrics" :loading="refreshing || apiStarting" />
+        <RadarStatsBar :metrics="metrics" :loading="refreshing || apiStarting || warmingUp" />
 
         <UiCard>
           <UiCardHeader class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
@@ -209,8 +311,12 @@ onUnmounted(() => {
               :prediction="selectedPrediction"
               :reload-token="chartReloadToken"
             />
-            <p v-else-if="apiStarting" class="text-sm text-muted-foreground">Waiting for API…</p>
-            <p v-else class="text-sm text-muted-foreground">Select a symbol or refresh to load predictions.</p>
+            <p v-else-if="bootstrapping || apiStarting || warmingUp" class="text-sm text-muted-foreground">
+              Loading cached signals…
+            </p>
+            <p v-else class="text-sm text-muted-foreground">
+              Waiting for predictions. The API fills caches in the background, or use Refresh for a full update.
+            </p>
           </UiCardContent>
         </UiCard>
 

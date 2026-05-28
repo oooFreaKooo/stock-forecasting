@@ -57,6 +57,42 @@ def _normalize_frame(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
     return df
 
 
+def _normalize_intraday_frame(df: pd.DataFrame, symbol: str) -> pd.DataFrame:
+    """Normalize intraday OHLCV; preserve bar timestamps (no day normalization)."""
+    if df.empty:
+        return pd.DataFrame(columns=OHLCV_COLUMNS)
+
+    frame = df.copy()
+    if isinstance(frame.columns, pd.MultiIndex):
+        frame.columns = frame.columns.get_level_values(0)
+
+    frame = frame.reset_index()
+    rename_map = {
+        "Date": "date",
+        "Datetime": "date",
+        "Open": "open",
+        "High": "high",
+        "Low": "low",
+        "Close": "close",
+        "Adj Close": "adj_close",
+        "Volume": "volume",
+    }
+    frame = frame.rename(columns={k: v for k, v in rename_map.items() if k in frame.columns})
+
+    if "adj_close" in frame.columns:
+        frame["close"] = frame["adj_close"]
+
+    frame["date"] = pd.to_datetime(frame["date"], utc=True).dt.tz_convert("UTC").dt.tz_localize(None)
+    frame["symbol"] = _normalize_symbol(symbol)
+
+    for col in ["open", "high", "low", "close", "volume"]:
+        if col not in frame.columns:
+            frame[col] = pd.NA
+
+    frame = frame[OHLCV_COLUMNS].drop_duplicates(subset=["date"], keep="last")
+    return frame.sort_values("date").reset_index(drop=True)
+
+
 class YFinanceSource(DataSource):
     """yfinance-backed data source."""
 
@@ -90,6 +126,47 @@ class YFinanceSource(DataSource):
                 time.sleep(self.retry_delay * attempt)
 
         raise RuntimeError(f"Failed to fetch {symbol} after {self.retry_count} attempts") from last_error
+
+    def fetch_period(
+        self,
+        symbol: str,
+        period: str,
+        interval: str = "5m",
+        *,
+        prepost: bool = False,
+    ) -> pd.DataFrame:
+        last_error: Optional[Exception] = None
+        for attempt in range(1, self.retry_count + 1):
+            try:
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(
+                    period=period,
+                    interval=interval,
+                    auto_adjust=True,
+                    prepost=prepost,
+                )
+                result = _normalize_intraday_frame(df, symbol)
+                logger.info(
+                    "fetched_intraday",
+                    symbol=symbol,
+                    period=period,
+                    interval=interval,
+                    rows=len(result),
+                )
+                return result
+            except Exception as exc:
+                last_error = exc
+                logger.warning(
+                    "intraday_fetch_retry",
+                    symbol=symbol,
+                    attempt=attempt,
+                    error=str(exc),
+                )
+                time.sleep(self.retry_delay * attempt)
+
+        raise RuntimeError(
+            f"Failed to fetch intraday {symbol} after {self.retry_count} attempts"
+        ) from last_error
 
     def fetch_many(
         self,

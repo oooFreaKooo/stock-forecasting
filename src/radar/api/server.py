@@ -8,22 +8,35 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from radar.api.chart_series import SUPPORTED_INTERVALS, get_chart_series
+from radar.api.chart_series import SUPPORTED_INTERVALS, get_chart_bundle, get_chart_series
 from radar.api.service import (
+    bootstrap_dashboard,
     get_all_predictions,
     get_news,
     get_performance,
     refresh_dashboard,
 )
+from radar.cache.artifacts import load_predictions_cache
+from radar.config.settings import get_settings
+from radar.jobs.scheduler import BackgroundJobRunner
 
 API_VERSION = "2.0.0"
-API_FEATURES = ["refresh", "news", "meta"]
+API_FEATURES = ["refresh", "bootstrap", "news", "meta", "background_jobs"]
 STARTED_AT = datetime.now(timezone.utc)
+_job_runner: BackgroundJobRunner | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _job_runner
+    settings = get_settings()
+    settings.ensure_dirs()
+    if settings.jobs.enabled and settings.jobs.run_in_api:
+        _job_runner = BackgroundJobRunner(settings)
+        _job_runner.start()
     yield
+    if _job_runner is not None:
+        _job_runner.stop()
 
 
 app = FastAPI(title="Radar AI API", version=API_VERSION, lifespan=lifespan)
@@ -56,12 +69,16 @@ def meta():
         for route in app.routes
         if getattr(route, "path", None) and route.path.startswith("/")
     })
+    predictions_cache = load_predictions_cache(settings)
     return {
         "version": API_VERSION,
         "started_at": STARTED_AT.isoformat(),
         "features": API_FEATURES,
         "routes": routes,
         "news_enabled": "/api/news" in routes,
+        "background_jobs": settings.jobs.enabled and settings.jobs.run_in_api,
+        "predictions_cached": bool(predictions_cache and predictions_cache.get("predictions")),
+        "predictions_cached_at": predictions_cache.get("cached_at") if predictions_cache else None,
         "model_version": model_version,
     }
 
@@ -69,6 +86,15 @@ def meta():
 @app.get("/api/predictions")
 def predictions():
     return get_all_predictions()
+
+
+@app.post("/api/bootstrap")
+def bootstrap():
+    """Load cached predictions or score from disk artifacts (no full data refresh)."""
+    try:
+        return bootstrap_dashboard()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Bootstrap failed: {exc}") from exc
 
 
 @app.post("/api/refresh")
@@ -80,11 +106,25 @@ def refresh():
 
 
 @app.get("/api/performance")
-def performance():
+def performance(refresh: bool = Query(False, description="Recompute OOS metrics (slow)")):
     try:
-        return get_performance()
+        return get_performance(refresh=refresh)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.get("/api/chart/{symbol}/bundle")
+def chart_bundle(
+    symbol: str,
+    limit: Optional[int] = Query(None, ge=10, le=5000),
+):
+    """Canonical 5M intraday + daily chart data (one AI run). Frontend resamples to 1H."""
+    try:
+        return get_chart_bundle(symbol, limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch chart bundle: {exc}") from exc
 
 
 @app.get("/api/chart/{symbol}")

@@ -15,6 +15,7 @@ from radar.config.schemas import (
     FeatureParamsConfig,
     ForecastConfig,
     HybridConfig,
+    JobsConfig,
     LabelsConfig,
     MacroParamsConfig,
     MemoryConfig,
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
     ensemble: EnsembleConfig = Field(default_factory=EnsembleConfig)
     forecast: ForecastConfig = Field(default_factory=ForecastConfig)
     hybrid: HybridConfig = Field(default_factory=HybridConfig)
+    jobs: JobsConfig = Field(default_factory=JobsConfig)
 
     @classmethod
     def load(
@@ -80,7 +82,17 @@ class Settings(BaseSettings):
     ) -> Settings:
         config_dir = Path(config_dir)
         merged: dict[str, Any] = {}
-        for name in ("default.yaml", "features.yaml", "memory.yaml", "rl.yaml", "macro.yaml", "nlp.yaml", "ensemble.yaml", "forecast.yaml"):
+        for name in (
+            "default.yaml",
+            "features.yaml",
+            "memory.yaml",
+            "rl.yaml",
+            "macro.yaml",
+            "nlp.yaml",
+            "ensemble.yaml",
+            "forecast.yaml",
+            "jobs.yaml",
+        ):
             path = config_dir / name
             if path.exists():
                 merged = _merge_dicts(merged, _load_yaml(path))
@@ -108,6 +120,7 @@ class Settings(BaseSettings):
             self.memory.store_dir,
             self.rl.models_dir,
             "data/cache",
+            Path(self.paths.processed_dir) / "intraday",
         ):
             Path(path).mkdir(parents=True, exist_ok=True)
 

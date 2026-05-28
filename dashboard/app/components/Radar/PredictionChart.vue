@@ -14,6 +14,7 @@ import {
   formatPriceAxis,
   roundPrice,
 } from '~/utils/format'
+import { resampleIntradayChartTo1h } from '~/utils/chartResample'
 
 const props = defineProps<{
   prediction: Prediction
@@ -31,8 +32,7 @@ const loading = ref(false)
 const loadError = ref<string | null>(null)
 
 const pricePoints = shallowRef<LinePoint[]>([])
-const forecastPoints = shallowRef<LinePoint[]>([])
-const validationPoints = shallowRef<LinePoint[]>([])
+const modelPoints = shallowRef<LinePoint[]>([])
 const validationMetrics = ref<ChartValidationMetrics | null>(null)
 const tooltipDates = shallowRef<string[]>([])
 const useCalendarAxis = ref(false)
@@ -42,9 +42,18 @@ const chartRef = useTemplateRef<{ chart?: ChartRef }>('chart')
 
 let fetchAbort: AbortController | null = null
 
+type ChartBundleCache = {
+  symbol: string
+  intraday: ChartSeriesResponse
+  intraday1h: ChartSeriesResponse
+  daily: ChartSeriesResponse
+}
+
+const chartBundleCache = shallowRef<ChartBundleCache | null>(null)
+
 const INTERVALS: { value: ChartInterval; label: string; stepMs: number; defaultBars: number }[] = [
   { value: '5m', label: '5M', stepMs: 300_000, defaultBars: 156 },
-  { value: '1h', label: '1H', stepMs: 3_600_000, defaultBars: 48 },
+  { value: '1h', label: '1H', stepMs: 3_600_000, defaultBars: 120 },
   { value: '1d', label: '1D', stepMs: 86_400_000, defaultBars: 90 },
 ]
 
@@ -52,7 +61,11 @@ const STEP_BY_INTERVAL = Object.fromEntries(INTERVALS.map(i => [i.value, i.stepM
 const DEFAULT_BARS = Object.fromEntries(INTERVALS.map(i => [i.value, i.defaultBars])) as Record<ChartInterval, number>
 
 const barCount = computed(() => pricePoints.value.length)
-const forecastBarCount = computed(() => Math.max(0, forecastPoints.value.length - 1))
+const forwardBarCount = computed(() => {
+  const marker = forecastMarkerX.value
+  if (marker == null) return 0
+  return modelPoints.value.filter(p => p.x > marker).length
+})
 const hasData = computed(() => pricePoints.value.length > 0)
 const chartKey = computed(() => `${props.prediction.symbol}-${interval.value}-${props.reloadToken ?? 0}`)
 
@@ -81,8 +94,7 @@ function boundsForXRange(minX: number, maxX: number): { min: number; max: number
   const inRange = (pts: LinePoint[]) => pts.filter(p => p.x >= minX && p.x <= maxX)
   return computeBounds([
     ...inRange(pricePoints.value),
-    ...inRange(validationPoints.value),
-    ...inRange(forecastPoints.value),
+    ...inRange(modelPoints.value),
   ])
 }
 
@@ -111,15 +123,14 @@ function defaultXRange(prices: LinePoint[], stepMs: number, forecastBars: number
 function fitDefaultView(chart: ChartRef) {
   const priceBars = pricePoints.value.length
   if (!priceBars) return
-  const { min, max } = defaultXRange(pricePoints.value, axisStepMs.value, forecastBarCount.value)
+  const { min, max } = defaultXRange(pricePoints.value, axisStepMs.value, forwardBarCount.value)
   chart.zoomX(min, max)
   fitYAxis(chart, min, max)
 }
 
 function buildChartData(
   history: ChartPoint[],
-  forecast: ChartPoint[],
-  validation: ChartPoint[],
+  model: ChartPoint[],
   iv: ChartInterval,
 ) {
   const stepMs = STEP_BY_INTERVAL[iv]
@@ -133,32 +144,22 @@ function buildChartData(
     prices.push({ x: parseUtcMs(bar.date), y: close })
   }
 
-  const forecastLine: LinePoint[] = []
-  let markerX: number | null = null
-  const lastPoint = prices.at(-1)
-
-  if (lastPoint && forecast.length) {
-    markerX = lastPoint.x
-    forecastLine.push(lastPoint)
-
-    for (const bar of forecast) {
-      const close = roundPrice(bar.close)
-      if (close == null) continue
-      forecastLine.push({ x: parseUtcMs(bar.date), y: close })
-    }
-  }
-
-  const validationLine: LinePoint[] = []
-  for (const pt of validation) {
+  const modelLine: LinePoint[] = []
+  for (const pt of model) {
     const close = roundPrice(pt.close)
     if (close == null) continue
-    validationLine.push({ x: parseUtcMs(pt.date), y: close })
+    modelLine.push({ x: parseUtcMs(pt.date), y: close })
+  }
+
+  const lastHist = prices.at(-1)
+  let markerX: number | null = null
+  if (lastHist && modelLine.some(p => p.x > lastHist.x)) {
+    markerX = lastHist.x
   }
 
   tooltipDates.value = []
   pricePoints.value = prices
-  forecastPoints.value = forecastLine
-  validationPoints.value = validationLine
+  modelPoints.value = modelLine
   forecastMarkerX.value = markerX
 }
 
@@ -174,18 +175,11 @@ const chartSeries = computed<ApexOptions['series']>(() => {
   const series: ApexOptions['series'] = [
     { name: 'Actual', type: 'line', data: pricePoints.value },
   ]
-  if (validationPoints.value.length) {
+  if (modelPoints.value.length) {
     series.push({
-      name: 'Backtest forecast',
+      name: `AI forecast (${forecastEngine.value ?? 'baseline'})`,
       type: 'line',
-      data: validationPoints.value,
-    })
-  }
-  if (forecastPoints.value.length) {
-    series.push({
-      name: `Forward forecast (${forecastEngine.value ?? 'baseline'})`,
-      type: 'line',
-      data: forecastPoints.value,
+      data: modelPoints.value,
     })
   }
   return series
@@ -193,7 +187,6 @@ const chartSeries = computed<ApexOptions['series']>(() => {
 
 const seriesStroke = computed(() => {
   const n = chartSeries.value?.length ?? 1
-  if (n >= 3) return { width: [2, 2, 2.5] as number[], dash: [0, 5, 6] as number[] }
   if (n === 2) return { width: [2, 2.5] as number[], dash: [0, 6] as number[] }
   return { width: [2] as number[], dash: [0] as number[] }
 })
@@ -249,7 +242,7 @@ const chartOptions = computed<ApexOptions>(() => ({
     curve: 'straight',
     dashArray: seriesStroke.value.dash,
   },
-  colors: ['#2563eb', '#8b5cf6', '#f97316'],
+  colors: ['#2563eb', '#8b5cf6'],
   grid: {
     borderColor: 'var(--color-border)',
     strokeDashArray: 4,
@@ -286,7 +279,7 @@ const chartOptions = computed<ApexOptions>(() => ({
     tooltip: { enabled: false },
   },
   legend: {
-    show: forecastPoints.value.length > 0 || validationPoints.value.length > 0,
+    show: modelPoints.value.length > 0,
     position: 'top',
     horizontalAlign: 'left',
   },
@@ -320,6 +313,25 @@ const chartOptions = computed<ApexOptions>(() => ({
     : undefined,
 }))
 
+function chartForInterval(cache: ChartBundleCache, iv: ChartInterval): ChartSeriesResponse {
+  if (iv === '1d') return cache.daily
+  if (iv === '1h') return cache.intraday1h ?? resampleIntradayChartTo1h(cache.intraday)
+  return cache.intraday
+}
+
+function applyChartResponse(res: ChartSeriesResponse, iv: ChartInterval) {
+  buildChartData(res.points, res.model?.points ?? [], iv)
+  chartMeta.value = res.meta
+  forecastEngine.value = res.model?.engine ?? res.forecast?.engine ?? res.meta.forecast_engine ?? null
+  validationMetrics.value = res.validation?.metrics ?? null
+}
+
+function applyIntervalView() {
+  const cache = chartBundleCache.value
+  if (!cache || cache.symbol !== props.prediction.symbol) return
+  applyChartResponse(chartForInterval(cache, interval.value), interval.value)
+}
+
 async function loadChart() {
   fetchAbort?.abort()
   fetchAbort = new AbortController()
@@ -327,30 +339,27 @@ async function loadChart() {
   loading.value = true
   loadError.value = null
 
-  const iv = interval.value
   const symbol = props.prediction.symbol
 
   try {
-    const res = await api.fetchChartSeries(symbol, iv)
+    const bundle = await api.fetchChartBundle(symbol)
     if (fetchAbort.signal.aborted) return
-    buildChartData(
-      res.points,
-      res.forecast?.points ?? [],
-      res.validation?.points ?? [],
-      iv,
-    )
-    chartMeta.value = res.meta
-    forecastEngine.value = res.forecast?.engine ?? res.meta.forecast_engine ?? null
-    validationMetrics.value = res.validation?.metrics ?? null
+    chartBundleCache.value = {
+      symbol: bundle.symbol,
+      intraday: bundle.intraday,
+      intraday1h: bundle.intraday_1h,
+      daily: bundle.daily,
+    }
+    applyIntervalView()
   } catch (e: unknown) {
     if (fetchAbort.signal.aborted) return
     const raw = e instanceof Error ? e.message : 'Failed to load chart data'
     loadError.value = raw.toLowerCase().includes('timeout') || raw.toLowerCase().includes('aborted')
       ? 'Chart request timed out. Retry shortly or check /tmp/radar-api.log.'
       : raw
+    chartBundleCache.value = null
     pricePoints.value = []
-    forecastPoints.value = []
-    validationPoints.value = []
+    modelPoints.value = []
     validationMetrics.value = null
     tooltipDates.value = []
     chartMeta.value = null
@@ -362,14 +371,24 @@ async function loadChart() {
   }
 }
 
-watch(interval, loadChart)
-watch(() => props.prediction.symbol, loadChart, { immediate: true })
+watch(interval, () => {
+  if (chartBundleCache.value?.symbol === props.prediction.symbol) {
+    applyIntervalView()
+    return
+  }
+  loadChart()
+})
+watch(() => props.prediction.symbol, () => {
+  chartBundleCache.value = null
+  loadChart()
+}, { immediate: true })
 watch(() => props.reloadToken, () => {
+  chartBundleCache.value = null
   loadChart()
 })
 
 watch(
-  () => [pricePoints.value.length, forecastPoints.value.length],
+  () => [pricePoints.value.length, modelPoints.value.length],
   async () => {
     if (!pricePoints.value.length) return
     await nextTick()
@@ -418,11 +437,9 @@ onBeforeUnmount(() => {
     </div>
 
     <p class="text-xs text-muted-foreground">
-      <template v-if="interval === '1d'">
-        Blue = actual daily close · Purple dashed = walk-forward backtest (last 30 sessions, no look-ahead) · Orange = forward forecast.
-      </template>
-      <template v-else>
-        Axis uses real UTC timestamps (Europe/Berlin in tooltips) · purple = walk-forward backtest aligned to each bar.
+      Blue = actual price · Violet dashed = one AI path (walk-forward backtest, then live forward from the last close).
+      <template v-if="interval !== '1d'">
+        Timestamps are UTC (Europe/Berlin in tooltips).
       </template>
       <span v-if="chartMeta?.note"> — {{ chartMeta.note }}</span>
     </p>
@@ -438,7 +455,7 @@ onBeforeUnmount(() => {
         v-if="loading"
         class="absolute inset-0 z-10 flex h-[560px] items-center justify-center rounded-lg bg-background/70 backdrop-blur-sm"
       >
-        <span class="text-sm text-muted-foreground">Loading {{ interval.toUpperCase() }} data + baseline path…</span>
+        <span class="text-sm text-muted-foreground">Loading chart (5M AI + daily)…</span>
       </div>
 
       <ClientOnly>

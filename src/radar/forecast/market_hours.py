@@ -83,6 +83,27 @@ def project_trading_timestamps(last_ts: pd.Timestamp, interval: str, horizon: in
     return pd.DatetimeIndex(dates)
 
 
+def project_trading_timestamps_until(
+    last_ts: pd.Timestamp,
+    interval: str,
+    end_ts: pd.Timestamp,
+    *,
+    max_bars: int = 500,
+) -> pd.DatetimeIndex:
+    """Project bar timestamps after ``last_ts`` through ``end_ts`` (trading hours only)."""
+    dates: list[pd.Timestamp] = []
+    current = to_utc_naive(last_ts)
+    end = to_utc_naive(end_ts)
+    while len(dates) < max_bars:
+        current = advance_trading_timestamp(current, interval)
+        if not is_valid_trading_time(current):
+            current = _snap_to_berlin_premarket(current)
+        if current > end:
+            break
+        dates.append(current)
+    return pd.DatetimeIndex(dates)
+
+
 def filter_trading_frame(frame: pd.DataFrame) -> pd.DataFrame:
     if frame.empty:
         return frame

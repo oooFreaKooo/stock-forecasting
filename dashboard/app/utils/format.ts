@@ -52,6 +52,23 @@ export function formatPercent(value: number | null | undefined, digits = 1): str
   return `${(value * 100).toFixed(digits)}%`
 }
 
+/** VADER-style score in [-1, 1] → integer percent; avoids "-0" for tiny negatives. */
+export function formatSentimentPercent(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—'
+  const rounded = Math.round(value * 100)
+  if (rounded === 0) return '0'
+  return rounded > 0 ? `+${rounded}` : String(rounded)
+}
+
+/** Color class from rounded sentiment percent (neutral when effectively zero). */
+export function sentimentPercentClass(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return 'text-muted-foreground'
+  const rounded = Math.round(value * 100)
+  if (rounded > 0) return 'text-emerald-600 dark:text-emerald-400'
+  if (rounded < 0) return 'text-red-500 dark:text-red-400'
+  return 'text-muted-foreground'
+}
+
 /** Chart times always shown in Europe/Berlin to match TradingView DE setup. */
 export const CHART_TIMEZONE = 'Europe/Berlin'
 

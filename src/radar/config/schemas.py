@@ -48,14 +48,14 @@ class ForecastConfig(BaseModel):
     enabled: bool = True
     horizon_days: int = 5
     context_days: int = 120
-    chart_history_days: int = 90
+    chart_history_days: int = 252
+    daily_validation_blend: float = 0.55
+    daily_validation_context_days: int = 15
     intraday_context_bars_5m: int = 256
     intraday_horizon_bars_5m: int = 78
-    intraday_validation_horizon_5m: int = 20
+    intraday_validation_horizon_5m: int = 8
     intraday_context_bars_1h: int = 120
     intraday_horizon_bars_1h: int = 24
-    intraday_validation_horizon_1h: int = 8
-    intraday_ensemble_blend: float = 0.65
 
 
 class HybridConfig(BaseModel):
@@ -82,6 +82,18 @@ class DataConfig(BaseModel):
     end_date: Optional[str] = None
     interval: str = "1d"
     source: str = "yfinance"
+
+
+class JobsConfig(BaseModel):
+    enabled: bool = True
+    bootstrap_on_startup: bool = True
+    run_in_api: bool = True
+    poll_seconds: int = 30
+    news_interval_minutes: int = 20
+    intraday_interval_minutes: int = 15
+    daily_interval_minutes: int = 60
+    intraday_period: str = "5d"
+    intraday_max_age_minutes: int = 20
 
 
 class PathsConfig(BaseModel):

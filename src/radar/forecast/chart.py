@@ -68,7 +68,7 @@ def render_prediction_chart(
 
     ax.axvline(history["date"].iloc[-1], color="#94a3b8", linestyle=":", alpha=0.8)
 
-    signal_label = "BUY" if prediction.signal else "WAIT"
+    signal_label = "BUY" if prediction.signal else "NO TRADE"
     title = (
         f"{prediction.symbol} — Hybrid AI Radar\n"
         f"P(up)={prediction.p_up:.1%} | Forecast 1d={prediction.forecast_return_1d:+.2%} | "

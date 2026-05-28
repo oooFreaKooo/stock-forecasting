@@ -8,6 +8,8 @@ export default defineEventHandler(async () => {
       features?: string[]
       news_enabled?: boolean
       routes?: string[]
+      predictions_cached?: boolean
+      predictions_cached_at?: string | null
     }>(`${base}/api/meta`, { timeout: 4_000 })
 
     return {
@@ -17,6 +19,8 @@ export default defineEventHandler(async () => {
       news_enabled: meta.news_enabled ?? meta.routes?.includes('/api/news') ?? false,
       features: meta.features ?? [],
       routes: meta.routes ?? [],
+      predictions_cached: meta.predictions_cached ?? false,
+      predictions_cached_at: meta.predictions_cached_at ?? null,
     }
   } catch {
     try {

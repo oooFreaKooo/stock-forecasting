@@ -2,14 +2,14 @@ forecast:
   enabled: true
   horizon_days: 5
   context_days: 120
-  chart_history_days: 60
+  chart_history_days: 252
+  daily_validation_blend: 0.55
+  daily_validation_context_days: 15
   intraday_context_bars_5m: 256
   intraday_horizon_bars_5m: 64
-  intraday_validation_horizon_5m: 20
+  intraday_validation_horizon_5m: 8
   intraday_context_bars_1h: 120
   intraday_horizon_bars_1h: 24
-  intraday_validation_horizon_1h: 8
-  intraday_ensemble_blend: 0.65
 
 hybrid:
   enabled: true

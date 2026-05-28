@@ -32,6 +32,8 @@ def append_headline_archive(processed_dir: str, headlines: pd.DataFrame) -> pd.D
     incoming["date"] = pd.to_datetime(incoming["date"]).dt.normalize()
     incoming["title"] = incoming["title"].fillna("").astype(str).str.strip()
     incoming = incoming[incoming["title"] != ""]
+    if "published" in incoming.columns:
+        incoming["published"] = pd.to_datetime(incoming["published"], utc=True)
 
     existing = load_headline_archive(processed_dir)
     combined = pd.concat([existing, incoming], ignore_index=True)

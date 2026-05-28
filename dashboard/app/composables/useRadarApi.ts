@@ -1,8 +1,8 @@
 import type {
   ApiEnsureResponse,
   ApiStatus,
-  ChartInterval,
-  ChartSeriesResponse,
+  ChartBundleResponse,
+  BootstrapResponse,
   DashboardRefreshResponse,
   NewsSnapshot,
   PerformanceMetrics,
@@ -15,7 +15,8 @@ export function useRadarApi() {
   const base = config.public.apiBase as string
   const requestTimeoutMs = 8_000
   const refreshTimeoutMs = 180_000
-  const chartTimeoutMs = 120_000
+  const bootstrapTimeoutMs = 120_000
+  const chartTimeoutMs = 240_000
 
   function apiUrl(path: string) {
     return `${base}${path}`.replace('//', '/')
@@ -39,9 +40,17 @@ export function useRadarApi() {
     })
   }
 
-  async function fetchChartSeries(symbol: string, interval: ChartInterval = '5m'): Promise<ChartSeriesResponse> {
-    return await apiFetch(`/api/chart/${symbol}`, {
-      query: { interval },
+  /** Cached predictions or score from disk artifacts (no full market refresh). */
+  async function bootstrapDashboard(): Promise<BootstrapResponse> {
+    return await apiFetch('/api/bootstrap', {
+      method: 'POST',
+      timeout: bootstrapTimeoutMs,
+    })
+  }
+
+  /** One 5M AI run + daily series; frontend resamples to 1H without refetch. */
+  async function fetchChartBundle(symbol: string): Promise<ChartBundleResponse> {
+    return await apiFetch(`/api/chart/${symbol}/bundle`, {
       timeout: chartTimeoutMs,
     })
   }
@@ -75,7 +84,8 @@ export function useRadarApi() {
   return {
     fetchPredictions,
     refreshDashboard,
-    fetchChartSeries,
+    bootstrapDashboard,
+    fetchChartBundle,
     fetchPerformance,
     fetchNews,
     checkHealth,

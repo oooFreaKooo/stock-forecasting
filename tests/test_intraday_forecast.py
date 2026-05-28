@@ -23,4 +23,4 @@ def test_forecast_intraday_series_shape():
     result = forecast_intraday_series(frame, "5m")
     assert result.horizon_bars == 64
     assert len(result.points) == 64
-    assert result.engine == "baseline_bars"
+    assert result.engine in ("baseline_bars", "intraday_lgbm")

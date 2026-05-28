@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import type { Prediction } from '~/types/radar'
-import { formatPrice } from '~/utils/format'
+import { formatPrice, formatSentimentPercent, sentimentPercentClass } from '~/utils/format'
+import {
+  signalMeterLabel,
+  signalMeterPercent,
+  signalMeterValue,
+  tradeActionHint,
+  tradeActionLabel,
+} from '~/utils/signalLabels'
 
 const props = defineProps<{
   prediction: Prediction
@@ -29,11 +36,11 @@ const badgeVariant = computed(() => {
       <div class="flex items-center justify-between gap-2">
         <UiCardTitle>{{ prediction.symbol }}</UiCardTitle>
         <UiBadge :variant="isBuy ? 'default' : 'outline'">
-          {{ prediction.action ?? (isBuy ? 'BUY' : 'WAIT') }}
+          {{ tradeActionLabel(prediction) }}
         </UiBadge>
       </div>
-      <UiCardDescription>
-        Ensemble direction · baseline 1d path
+      <UiCardDescription :title="tradeActionHint(prediction)">
+        {{ isBuy ? 'Actionable buy · 1d ensemble path' : 'No buy today · P(up) is informational' }}
       </UiCardDescription>
     </UiCardHeader>
     <UiCardContent class="space-y-3">
@@ -66,17 +73,17 @@ const badgeVariant = computed(() => {
         </div>
         <div v-if="prediction.sentiment_mean != null">
           <p class="text-muted-foreground">News sentiment</p>
-          <p class="font-semibold" :class="prediction.sentiment_mean >= 0 ? 'text-emerald-600' : 'text-red-500'">
-            {{ (prediction.sentiment_mean * 100).toFixed(0) }}
+          <p class="font-semibold" :class="sentimentPercentClass(prediction.sentiment_mean)">
+            {{ formatSentimentPercent(prediction.sentiment_mean) }}
           </p>
         </div>
       </div>
       <div class="space-y-1">
         <div class="flex justify-between text-xs text-muted-foreground">
-          <span>Confidence</span>
-          <span>{{ prediction.confidence ?? 'none' }}</span>
+          <span>{{ signalMeterLabel(prediction) }}</span>
+          <span class="font-medium text-foreground">{{ signalMeterValue(prediction) }}</span>
         </div>
-        <UiProgress :model-value="(prediction.confluence_score ?? prediction.p_up ?? 0) * 100" />
+        <UiProgress :model-value="signalMeterPercent(prediction)" />
       </div>
     </UiCardContent>
   </UiCard>

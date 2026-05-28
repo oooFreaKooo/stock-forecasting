@@ -28,10 +28,18 @@ export interface ChartValidation {
   metrics: ChartValidationMetrics
 }
 
+export interface ChartModelPath {
+  engine: string
+  points: ChartPoint[]
+  backtest_bars?: number
+  forward_bars?: number
+}
+
 export interface ChartSeriesResponse {
   symbol: string
   interval: ChartInterval
   points: ChartPoint[]
+  model?: ChartModelPath
   forecast: ChartForecast
   validation?: ChartValidation
   meta: {
@@ -43,7 +51,19 @@ export interface ChartSeriesResponse {
     forecast_engine?: string
     forecast_bars?: number
     validation_bars?: number
+    display_timezone?: string
+    ai_p_up?: number
+    ai_daily_return_target_1d?: number | null
+    ai_daily_target_price_1d?: number | null
   }
+}
+
+export interface ChartBundleResponse {
+  symbol: string
+  intraday: ChartSeriesResponse
+  /** ~30d hourly actuals; AI overlay resampled from intraday (5m). */
+  intraday_1h: ChartSeriesResponse
+  daily: ChartSeriesResponse
 }
 
 export interface NewsHeadline {
@@ -125,6 +145,13 @@ export interface DashboardRefreshResponse extends PredictionsResponse {
   metrics: PerformanceMetrics | null
 }
 
+export interface BootstrapResponse extends PredictionsResponse {
+  status: 'cached' | 'computed'
+  cached_at?: string
+  news: NewsSnapshot
+  metrics?: PerformanceMetrics | null
+}
+
 export interface ApiStatus {
   online: boolean
   version: string | null
@@ -133,6 +160,8 @@ export interface ApiStatus {
   features: string[]
   routes: string[]
   stale?: boolean
+  predictions_cached?: boolean
+  predictions_cached_at?: string | null
 }
 
 export interface ApiEnsureResponse {

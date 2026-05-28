@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { NewsHeadline, NewsSnapshot } from '~/types/radar'
+import { formatSentimentPercent, sentimentPercentClass } from '~/utils/format'
 
 const props = defineProps<{
   news: NewsSnapshot | null
@@ -117,8 +118,8 @@ function formatHeadlineTime(headline: NewsHeadline) {
               >
                 <div class="mb-1 flex items-center justify-between gap-2">
                   <UiBadge variant="outline" class="text-[10px]">{{ headline.symbol }}</UiBadge>
-                  <span class="text-[10px] font-medium tabular-nums" :class="sentimentClass(headline.sentiment)">
-                    {{ headline.sentiment >= 0 ? '+' : '' }}{{ (headline.sentiment * 100).toFixed(0) }}
+                  <span class="text-[10px] font-medium tabular-nums" :class="sentimentPercentClass(headline.sentiment)">
+                    {{ formatSentimentPercent(headline.sentiment) }}
                   </span>
                 </div>
                 <p class="text-sm leading-snug">{{ headline.title }}</p>

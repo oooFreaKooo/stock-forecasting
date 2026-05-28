@@ -60,6 +60,8 @@ radar-ensemble = "radar.cli.train_ensemble:main"
 radar-pipeline = "radar.cli.run_pipeline:main"
 radar-predict = "radar.cli.predict:main"
 radar-api = "radar.api.server:main"
+radar-intraday = "radar.cli.train_intraday:main"
+radar-scheduler = "radar.cli.scheduler:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -1,0 +1,13 @@
+jobs:
+  enabled: true
+  # Warm news/intraday/predictions caches when API starts (no full feature rebuild).
+  bootstrap_on_startup: true
+  # Background loops (API lifespan). Disable for tests or when running radar-scheduler CLI only.
+  run_in_api: true
+  poll_seconds: 30
+  news_interval_minutes: 20
+  intraday_interval_minutes: 15
+  daily_interval_minutes: 60
+  # Incremental fetch windows
+  intraday_period: "5d"
+  intraday_max_age_minutes: 20

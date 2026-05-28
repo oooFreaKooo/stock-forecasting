@@ -1,3 +1,13 @@
+"""
+Daily ensemble walk-forward training on the feature panel.
+
+Produces ``oos_predictions.parquet`` / ``ensemble_oos.parquet`` used by the daily
+ensemble and hybrid gating.
+
+This is NOT intraday chart backtest evaluation — see ``radar.forecast.chart_eval``
+and ``radar.api.chart_validation``.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

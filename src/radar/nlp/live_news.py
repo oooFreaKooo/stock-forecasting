@@ -9,7 +9,8 @@ import pandas as pd
 import structlog
 
 from radar.config.settings import Settings
-from radar.nlp.ingest.news_fetcher import fetch_rss_headlines
+from radar.nlp.ingest.news_fetcher import fetch_rss_headlines, fetch_rss_headlines_incremental
+from radar.nlp.ingest.rss_state import load_feed_state, save_feed_state
 from radar.nlp.sentiment.daily_aggregator import aggregate_daily_sentiment, build_market_sentiment
 
 logger = structlog.get_logger(__name__)
@@ -65,11 +66,76 @@ def _headlines_to_records(headlines: pd.DataFrame, limit_per_symbol: int = 8) ->
     return trimmed
 
 
-def refresh_live_news(settings: Settings, persist: bool = True) -> dict[str, Any]:
+def _records_to_headlines_df(records: list[dict[str, Any]]) -> pd.DataFrame:
+    if not records:
+        return pd.DataFrame(columns=["date", "symbol", "title", "published"])
+
+    rows: list[dict[str, Any]] = []
+    for item in records:
+        title = str(item.get("title", "")).strip()
+        if not title:
+            continue
+        published = item.get("published")
+        if published:
+            pub_ts = pd.Timestamp(published)
+        else:
+            pub_ts = pd.Timestamp(item.get("date"))
+        rows.append({
+            "date": pd.Timestamp(item.get("date")).normalize(),
+            "symbol": str(item.get("symbol", "MARKET")),
+            "title": title,
+            "published": pub_ts,
+        })
+    return pd.DataFrame(rows)
+
+
+def _merge_headline_records(
+    existing: list[dict[str, Any]],
+    new_items: list[dict[str, Any]],
+    *,
+    max_items: int = 200,
+) -> list[dict[str, Any]]:
+    seen: set[tuple[str, str | None]] = set()
+    merged: list[dict[str, Any]] = []
+    for item in new_items + existing:
+        key = (str(item.get("title", "")), item.get("published"))
+        if not key[0] or key in seen:
+            continue
+        seen.add(key)
+        merged.append(item)
+    merged.sort(key=lambda x: x.get("published") or x.get("date") or "", reverse=True)
+    return merged[:max_items]
+
+
+def refresh_live_news(
+    settings: Settings,
+    persist: bool = True,
+    *,
+    incremental: bool = True,
+) -> dict[str, Any]:
     """Fetch RSS headlines, score sentiment, and optionally cache for live predictions."""
-    headlines = fetch_rss_headlines(settings.nlp.rss_feeds)
+    processed = Path(settings.paths.processed_dir)
+    new_count = 0
+    if incremental:
+        state = load_feed_state(processed)
+        headlines, state, new_count = fetch_rss_headlines_incremental(
+            settings.nlp.rss_feeds,
+            state,
+        )
+        save_feed_state(processed, state)
+    else:
+        headlines = fetch_rss_headlines(settings.nlp.rss_feeds)
+        new_count = len(headlines)
+
+    cached = load_live_news_cache(settings)
+    fresh_records = _headlines_to_records(headlines)
+    merged_headlines = _merge_headline_records(
+        cached.get("headlines", []) if cached else [],
+        fresh_records,
+    )
+    headlines_for_sentiment = _records_to_headlines_df(merged_headlines)
     daily = aggregate_daily_sentiment(
-        headlines,
+        headlines_for_sentiment,
         window=settings.nlp.sentiment_window,
         use_finbert=settings.nlp.use_finbert,
     )
@@ -110,13 +176,14 @@ def refresh_live_news(settings: Settings, persist: bool = True) -> dict[str, Any
     market_row = market.iloc[-1] if not market.empty else None
     payload: dict[str, Any] = {
         "fetched_at": datetime.now(timezone.utc).isoformat(),
-        "headline_count": int(len(headlines)),
+        "headline_count": int(len(merged_headlines)),
+        "new_headlines": int(new_count),
         "market_sentiment": round(float(market_row["market_sentiment"]), 4) if market_row is not None else 0.0,
         "market_sentiment_dispersion": round(
             float(market_row["market_sentiment_dispersion"]), 4
         ) if market_row is not None else 0.0,
         "symbols": symbol_stats,
-        "headlines": _headlines_to_records(headlines),
+        "headlines": merged_headlines,
     }
 
     if persist:
@@ -139,12 +206,25 @@ def load_live_news_cache(settings: Settings) -> Optional[dict[str, Any]]:
         return None
 
 
-def get_live_news(settings: Settings, refresh: bool = False) -> dict[str, Any]:
-    if refresh:
-        return refresh_live_news(settings, persist=True)
+def get_live_news(
+    settings: Settings,
+    refresh: bool = False,
+    *,
+    max_age_seconds: Optional[float] = None,
+) -> dict[str, Any]:
+    """
+    Return cached headlines when fresh enough.
+
+    ``refresh=True`` forces a new RSS fetch. Otherwise reuse cache until ``max_age_seconds``.
+    """
     cached = load_live_news_cache(settings)
-    if cached is not None:
-        return cached
+    if cached is not None and not refresh:
+        if max_age_seconds is None:
+            return cached
+        from radar.cache.artifacts import is_stale
+
+        if not is_stale(cached.get("fetched_at"), max_age_seconds):
+            return cached
     return refresh_live_news(settings, persist=True)
 
 
